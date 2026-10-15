@@ -35,6 +35,20 @@ struct BlendOptions {
     unsigned window = 8;          // match lookahead
     float max_jump = 64.0f;       // a paired vertex moving further (guest px) is not blended
     float cut_median = 40.0f;     // median movement above this: a camera cut, no blending at all
+    // A textured strip pairs only if every vertex keeps its texture coordinates (dreamcomp).
+    // World geometry carries fixed UVs, so two strips that merely share parameter words and a
+    // vertex count -- the many terrain strips of one texture when the game culls or adds some
+    // while the camera turns -- no longer pair with each other and get blended across the screen.
+    bool match_uv = true;
+    float uv_tolerance = 1.0f / 1024.0f;
+    // With its texture coordinates confirmed, a strip is the same piece of the world, so it may
+    // move further than max_jump: a fast camera turn moves near geometry hundreds of pixels per
+    // game frame, and refusing those strips is what opened the seams.
+    float max_jump_uv = 640.0f;
+    // Strips that cannot be blended stay where the newer frame has them, and their blended
+    // neighbours move: the seams between them open. When more than this share of the drawn
+    // screen area would be left unblended, the in-between frame is dropped like a cut (dreamcomp).
+    float max_unblended = 0.01f;
 };
 
 struct BlendStats {
@@ -42,11 +56,15 @@ struct BlendStats {
     std::uint32_t blended_strips = 0, jumped_strips = 0;
     float median_motion = 0.0f;
     bool cut = false;
+    std::uint32_t uv_mismatched_strips = 0;  // paired by words, refused by texture coordinates
+    std::uint32_t repaired_strips = 0;       // paired by texture coordinates out of list order
+    float unblended_share = 0.0f;            // of the drawn screen area, in a moving scene
+    bool torn = false;                       // dropped: too much would be left unblended
 };
 
 // `out` becomes `newer` with every paired, plausibly moving strip's positions (x, y and 1/w)
 // blended towards `older`. Texture coordinates and colours come from `newer`. Returns false (and
-// leaves `out` equal to `newer`) on a camera cut. `pairs` is scratch storage, kept by the caller.
+// leaves `out` equal to `newer`) on a camera cut, or when the blend would tear (BlendStats::torn). `pairs` is scratch storage, kept by the caller.
 bool blend_frames(const Frame& older, const Frame& newer, const BlendOptions& opt,
                   std::vector<StripPair>& pairs, Frame& out, BlendStats& stats);
 
