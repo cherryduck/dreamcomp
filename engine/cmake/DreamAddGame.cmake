@@ -23,6 +23,9 @@
 set(DREAM_TRANSLATE_EXTRA_FLAGS "" CACHE STRING
     "Extra dream-translate flags for the game units (--trace, --no-irq); development trees only")
 
+set(DREAM_GEN_SHARDS 1 CACHE STRING
+    "Split each game's generated code into this many extra units, compiled in parallel (1 = one file)")
+
 function(dream_add_game id)
   cmake_parse_arguments(ARG "BOOT_TEST" "TITLE" "" ${ARGN})
   if(NOT ARG_TITLE)
@@ -54,6 +57,20 @@ function(dream_add_game id)
   # One unit for the main binary, plus one per [[relocations]] entry: a region the program copies
   # somewhere else and runs from there, which has to be translated as it looks at its destination.
   set(_units ${_gen}/${id}.cpp)
+  # One generated file of a few hundred MB compiles on one core for many minutes; split, the
+  # parts build in parallel (dreamcomp). 1 = the upstream single-file output.
+  set(_shards ${DREAM_GEN_SHARDS})
+  set(_shard_flags "")
+  if(_shards GREATER 1)
+    set(_shard_flags --shards ${_shards})
+    math(EXPR _last "${_shards} - 1")
+    foreach(k RANGE 0 ${_last})
+      if(k LESS 10)
+        set(k "0${k}")
+      endif()
+      list(APPEND _units ${_gen}/${id}_part${k}.cpp)
+    endforeach()
+  endif()
   set(_headers ${_gen}/${id}.h)
   string(REGEX MATCHALL "dest = 0x[0-9A-Fa-f]+" _dests "${_toml}")
   set(_seen "")
@@ -88,7 +105,7 @@ function(dream_add_game id)
   separate_arguments(DREAM_TRANSLATE_EXTRA_FLAGS)
   add_custom_command(
     OUTPUT ${_units} ${_headers}
-    COMMAND dream-translate game --config ${_toml_path} --out-dir ${_gen} ${DREAM_TRANSLATE_EXTRA_FLAGS}
+    COMMAND dream-translate game --config ${_toml_path} --out-dir ${_gen} ${_shard_flags} ${DREAM_TRANSLATE_EXTRA_FLAGS}
     DEPENDS dream-translate ${_toml_path} ${_symbols} ${_bin}
     COMMENT "Translating ${ARG_TITLE}"
     VERBATIM)
