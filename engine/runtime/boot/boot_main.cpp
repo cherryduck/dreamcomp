@@ -470,6 +470,7 @@ struct Live {
             ++palette_changes;
         if (interpolate) {
             interp_ready = false;
+            interp_fresh = false;
             if (have_prev) {
                 const auto t0 = std::chrono::steady_clock::now();
                 dream::render::BlendStats st;
@@ -481,10 +482,15 @@ struct Live {
                 interp_vertices += st.match.vertices_b;
                 interp_matched += st.match.matched_vertices;
                 interp_jumped += st.jumped_strips;
+                interp_uv += st.uv_mismatched_strips;
+                interp_repaired += st.repaired_strips;
+                if (std::getenv("DREAM_INTERP_DEBUG") && st.torn)
+                    std::fprintf(stderr, "interp torn: render %llu unblended %.3f motion %.1f\n", static_cast<unsigned long long>(rendered), st.unblended_share, st.median_motion);
                 if (!blended) {
-                    ++interp_cuts;
+                    ++(st.torn ? interp_torn : interp_cuts);
                 } else if (interp_off.render(renderer, interp_frame, geometry)) {
                     interp_ready = true;
+                    interp_fresh = true;  // for DREAM_SHOT_INTERP: drawn for this frame
                     ++interp_rendered;
                 }
             }
@@ -955,7 +961,7 @@ struct Live {
         std::snprintf(name, sizeof name, "screenshot-%03u.ppm", screenshots++);
         screenshot_to(name);
         // DREAM_SHOT_INTERP=1 (dreamcomp): also the interpolated frame drawn before this one.
-        if (interpolate && interp_rendered && std::getenv("DREAM_SHOT_INTERP")) {
+        if (interpolate && interp_fresh && std::getenv("DREAM_SHOT_INTERP")) {
             if (const std::uint32_t* src = interp_off.pixels()) {
                 std::snprintf(name, sizeof name, "screenshot-%03u-interp.ppm", screenshots - 1);
                 if (FILE* f = std::fopen(name, "wb")) {
@@ -1076,7 +1082,8 @@ struct Live {
     dream::render::vk::Renderer renderer;
     dream::render::vk::Offscreen offscreen;
     // Geometry interpolation (dreamcomp, docs/INTERPOLATION.md): --interpolate.
-    bool interpolate = false, pace_interpolation = true, have_prev = false, interp_ready = false;
+    bool interpolate = false, pace_interpolation = true, have_prev = false, interp_ready = false,
+         interp_fresh = false;
     unsigned scale_ = 1;
     float render_aspect_ = 0.0f, want_render_aspect = 0.0f;
     unsigned want_scale = 0;  // dreamcomp: a scale asked for at run time, 0: none
@@ -1087,7 +1094,7 @@ struct Live {
     std::vector<dream::render::StripPair> interp_pairs;
     dream::render::BlendOptions interp_opts;
     std::uint64_t interp_rendered = 0, interp_presented = 0, interp_cuts = 0, interp_jumped = 0,
-                  interp_vertices = 0, interp_matched = 0;
+                  interp_vertices = 0, interp_matched = 0, interp_torn = 0, interp_uv = 0, interp_repaired = 0;
     double interp_ms = 0.0;
     std::uint64_t vram_invalidated = 0;  // textures dropped because the guest rewrote them
     std::chrono::steady_clock::time_point last_present{};
@@ -3048,16 +3055,21 @@ int main(int argc, char** argv) {
                 r.replace_failed, r.load_ms, r.dumped, r.dump_ms);
         if (live->interpolate)
             std::printf(
-                "interpolation: %llu blended frames drawn, %llu presented, %llu camera cuts; "
-                "%.1f%% of vertices paired, %llu strips not blended (implausible jump); "
+                "interpolation: %llu blended frames drawn, %llu presented, %llu camera cuts, %llu "
+                "dropped (would tear); %.1f%% of vertices paired, %llu strips not blended "
+                "(implausible jump), %llu refused (texture coordinates differ), %llu re-paired by "
+                "texture coordinates; "
                 "%.2f ms per blend\n",
                 static_cast<unsigned long long>(live->interp_rendered),
                 static_cast<unsigned long long>(live->interp_presented),
                 static_cast<unsigned long long>(live->interp_cuts),
+                static_cast<unsigned long long>(live->interp_torn),
                 live->interp_vertices ? 100.0 * static_cast<double>(live->interp_matched) /
                                             static_cast<double>(live->interp_vertices)
                                       : 0.0,
                 static_cast<unsigned long long>(live->interp_jumped),
+                static_cast<unsigned long long>(live->interp_uv),
+                static_cast<unsigned long long>(live->interp_repaired),
                 live->interp_rendered ? live->interp_ms / static_cast<double>(live->rendered) : 0.0);
         live->pacing.report();
         live->sync.report();
