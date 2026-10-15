@@ -1425,14 +1425,17 @@ std::string suggest_entries(dream::System& sys, std::uint32_t image_base, std::s
                             const std::vector<std::uint32_t>& known) {
     std::vector<std::pair<std::uint32_t, std::uint64_t>> misses;
     for (const auto& rec : sys.untranslated.records()) {
-        const std::uint32_t link = (rec.addr & 0x1FFFFFFFu) | 0x0C000000u;
+        // Link space keeps the image's own segment bits: SHC titles link at 0x0C010000, CodeWarrior
+        // ones at the P1 load address 0x8C010000.
+        const std::uint32_t seg = image_base & 0xE0000000u;
+        const std::uint32_t link = (rec.addr & 0x1FFFFFFFu) | seg;
         if (link < image_base || link >= image_base + image_size)
             continue;
         // Already a seed and still untranslated means something else is wrong, and repeating it
         // here would send the reader round the same loop a second time.
         bool already = false;
         for (std::uint32_t e : known)
-            already = already || ((e & 0x1FFFFFFFu) | 0x0C000000u) == link;
+            already = already || ((e & 0x1FFFFFFFu) | seg) == link;
         if (!already)
             misses.push_back({link, rec.count});
     }
