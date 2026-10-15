@@ -455,17 +455,40 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         float depth;  // 1/w: larger is nearer
         bool blended;
         bool alpha_test;
+        std::uint32_t first, count;  // vertices drawn: the whole strip, or one triangle of it
+        bool odd;                    // a strip's odd triangle: its winding is reversed
     };
     std::vector<Item> items;
+    // Translucent geometry with the hardware's autosort is drawn per triangle (dreamcomp). The
+    // PowerVR sorts every pixel; sorting whole strips by one key put large strips on the wrong
+    // side of what they cross. Ecco's surface tiles and the band of strips where the walls meet
+    // the water drew out of order on ~6 % of the screen, flickering as the camera moved, and
+    // above-water rock showed through from below; per triangle it is ~1 %, the remainder being
+    // triangles that really intersect. DREAM_STRIP_SORT=1 restores per-strip sorting.
+    const bool per_triangle = geometry.autosort && !std::getenv("DREAM_STRIP_SORT");
     const auto add_list = [&](ListType list, bool blended, bool alpha_test) {
         for (const Polygon& p : frame.lists[static_cast<unsigned>(list)]) {
+            if (blended && per_triangle && p.count > 3) {
+                for (std::uint32_t i = 0; i + 2 < p.count; ++i) {
+                    const Vertex& a = frame.vertices[p.first + i];
+                    const Vertex& b = frame.vertices[p.first + i + 1];
+                    const Vertex& c = frame.vertices[p.first + i + 2];
+                    // Strip joins repeat a vertex: those triangles have no area.
+                    if ((a.x == b.x && a.y == b.y) || (b.x == c.x && b.y == c.y) ||
+                        (a.x == c.x && a.y == c.y))
+                        continue;
+                    items.push_back({&p, (a.z + b.z + c.z) * (1.0f / 3.0f), true, alpha_test,
+                                     p.first + i, 3u, (i & 1u) != 0});
+                }
+                continue;
+            }
             // Sort key (dreamcomp): the farthest point, as Flycast's sorter uses (minZ): a large
             // strip reaching toward the camera must not be drawn over what lies in front of
             // most of it.
             float nearest = 1e30f;
             for (std::uint32_t i = 0; i < p.count; ++i)
                 nearest = std::min(nearest, frame.vertices[p.first + i].z);
-            items.push_back({&p, nearest, blended, alpha_test});
+            items.push_back({&p, nearest, blended, alpha_test, p.first, p.count, false});
         }
     };
     add_list(ListType::Opaque, false, false);
@@ -524,6 +547,10 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         key.depth_write =
             item.alpha_test ? 1u : (item.blended || isp_z_write_disable(p.isp)) ? 0u : 1u;
         key.cull_mode = isp_cull_mode(p.isp) & 3u;
+        // An odd triangle of a strip, drawn on its own, has the opposite winding: swap which
+        // side is culled (2 = cull if negative, 3 = cull if positive).
+        if (item.odd && key.cull_mode >= 2u)
+            key.cull_mode ^= 1u;
         key.blend = item.blended ? 1u : 0u;
         key.src_blend = tsp_src_instr(p.tsp) & 7u;
         key.dst_blend = tsp_dst_instr(p.tsp) & 7u;
@@ -591,9 +618,9 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         push.alpha_ref = geometry.alpha_ref;
         vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof push, &push);
-        vkCmdDraw(cmd, p.count, 1, p.first, 0);
+        vkCmdDraw(cmd, item.count, 1, item.first, 0);
         ++drawn_polygons;
-        drawn_vertices += p.count;
+        drawn_vertices += item.count;
     }
     vkCmdSetScissor(cmd, 0, 1, &full_scissor);
     if (!volumes_drawn)
