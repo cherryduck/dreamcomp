@@ -62,8 +62,31 @@ def jgr_play_press():
     return ",".join(p)
 
 
+ECCO_NEW_GAME = ("start@1300,a@1500,a@1700,a@1900,a@1960,a@2020,start@2100,a@2600")
+
+
+def ecco_play_press():
+    # Scenario runs get a fresh memory card, so this is the new-game path: title, Select VM (A),
+    # Select a Game -> New Game (A), initials AAA (A x3, Start = END), main menu -> Start Game.
+    # On the player's own card AAA already exists and the game refuses a second one: there,
+    # pick the AAA entry on Select a Game instead. Then the prologue film (~frame 2300-11000)
+    # and the first scene's tutorial dialogue (A every 120 frames).
+    p = [ECCO_NEW_GAME] + [f"a@{f}" for f in range(12000, 20000, 120)]
+    return ",".join(p)
+
+
 # Per port id: name -> (frames, press, default shots, what it covers).
 PORT_SCENARIOS = {
+    "ecco": {
+        "boot": (2000, "start@1300", "200,400,700,1000,1400,1600,1900",
+                 "SEGA and Appaloosa logos, title screen, Select VM"),
+        "menus": (3000, ECCO_NEW_GAME.rsplit(",", 1)[0], "1600,1800,2050,2500,2900",
+                  "fresh card: Select VM, New Game, initials AAA, main menu"),
+        "play": (20000, ecco_play_press(), "2700,4500,8000,10000,11500,13000,16000,19500",
+                 "new game, prologue film, first controllable scene and its tutorial dialogue"),
+        "attract": (9000, "", "1400,3000,4500,6000,7500,8900",
+                    "no input: logos, title and whatever the game shows when left alone"),
+    },
     "jetgrindradio": {
         "boot": (3000, "start@600,start@900", "300,900,1200,1500,1800,2100,2700",
                  "VMU notice, SEGA and CRI logos, graffiti notice, loading, title flyby"),
