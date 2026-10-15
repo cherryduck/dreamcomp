@@ -99,7 +99,8 @@ def port_info(port: str) -> dict:
     local_path = os.path.join(port, ".dreamcomp", "local.json")
     local = json.load(open(local_path)) if os.path.exists(local_path) else {}
     exe_candidates = glob.glob(os.path.join(port, "build", "game", f"*{EXE}"))
-    exe = next((e for e in exe_candidates if os.path.isfile(e) and (not IS_WIN or e.endswith(".exe"))), None)
+    exe = next((e for e in exe_candidates if os.path.isfile(e) and
+                (e.endswith(".exe") if IS_WIN else os.access(e, os.X_OK))), None)
     return {"dir": port, "id": gid, "toml": tomls[0], "local": local, "local_path": local_path, "exe": exe}
 
 

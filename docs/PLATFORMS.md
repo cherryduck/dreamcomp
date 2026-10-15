@@ -3,7 +3,7 @@
 | Platform | Toolchain | Graphics | Status |
 |---|---|---|---|
 | Windows x64 | clang-cl + Ninja inside VS 2022 Build Tools; `tools/dc.py build` | Vulkan (Vulkan SDK for `glslc`) | **works** (Soulcalibur, Iris Xe) |
-| Linux x64 | gcc 15 / clang; `tools/build_linux.sh` (native or WSL) | Vulkan; needs `libsdl3-dev`, `glslc` | headless build compiles everything with g++ 15 (2026-10-05); window build blocked on SDL3 + glslc packages in WSL |
+| Linux x64 | gcc 15/16 / clang; `tools/dc.py build` or `tools/build_linux.sh` | Vulkan; needs SDL3, Vulkan headers, `glslc` (Arch: `sdl3 vulkan-headers shaderc`) | **works** natively (CachyOS, g++ 16, RTX 5090, Wayland; Ecco, 2026-10-15). Profiler and PresentMon pacing are still Windows-only |
 | macOS ARM64 | Apple clang | Vulkan via MoltenVK (the engine's primary development platform) | engine CI; not verified for dreamcomp here (no Mac) |
 | Android ARM64 | NDK + Gradle, SDL3's Android glue | Vulkan | planned; no SDK/NDK on this machine |
 

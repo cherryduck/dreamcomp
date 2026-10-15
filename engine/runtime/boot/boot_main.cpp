@@ -24,6 +24,7 @@
 #include <iterator>
 #include <set>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -52,7 +53,6 @@
 #include "dream/audio/sink.h"
 #endif
 #ifdef DREAM_WITH_RENDERER
-#include <thread>
 
 #include "dream/render/background.h"
 #include "dream/render/display_list.h"
@@ -109,6 +109,9 @@ void print_guest_backtrace() {
 #endif
 }
 
+// CPU cycles the game thread used, set when the title's run ends (dreamcomp; report line).
+static std::uint64_t g_game_thread_cycles = 0;
+
 #ifdef DREAM_WITH_RENDERER
 // The windowed mode (WP2.3 step 6). Nothing here is constructed without --window, so the default
 // run stays exactly as headless as it was, which is what CI builds and what the emitter's
@@ -128,8 +131,6 @@ void print_guest_backtrace() {
 // written region can be worked out precisely enough to be safe, --framebuffer-writeback turns it
 // on and the default leaves video memory alone. Flycast reaches the same conclusion from the other
 // direction: its framebuffer emulation is off unless a title needs it.
-// CPU cycles the game thread used, set when the title's run ends (dreamcomp; report line).
-static std::uint64_t g_game_thread_cycles = 0;
 
 // Display sync (dreamcomp, --sync-display): when the display refreshes within 0.5 % of the guest's
 // frame rate, the pacing clock runs at the display's rate instead of the guest's. A 59.94 Hz game
@@ -2552,7 +2553,7 @@ int main(int argc, char** argv) {
                             auto snap = [&](std::chrono::steady_clock::time_point t) {
                                 const double k = std::round(static_cast<double>((t - vb).count()) /
                                                             static_cast<double>(per.count()));
-                                return vb + per * static_cast<long long>(k);
+                                return vb + per * static_cast<std::chrono::steady_clock::rep>(k);
                             };
                             const auto budget = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                                 sync.budget(period));
