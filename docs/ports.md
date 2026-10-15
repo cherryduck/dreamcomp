@@ -33,7 +33,7 @@ One section per port: paths, commands, keys, status. Skills read this instead of
 
 | | |
 |---|---|
-| Local repo | `ports/ecco-the-dolphin-defender-of-the-future-recomp` (branch `main`; no GitHub remote yet); dreamcomp fork `cherryduck/dreamcomp` branch `linux-ecco` |
+| Local repo | `ports/ecco-the-dolphin-defender-of-the-future-recomp` (branch `main`), public at https://github.com/cherryduck/ecco-the-dolphin-defender-of-the-future-recomp (2026-10-15); needs dreamcomp fork `cherryduck/dreamcomp` branch `linux-ecco` |
 | Disc | MK-5103350 V1.003 (2000-05-09); boot `0.BIN` 2,969,164 bytes, SHA-1 `e6b209962f6d3d9565a4a6f8d430f1e921d264c0` |
 | SDK | CodeWarrior; Shinobi 1.43, Kamui2 16.3.2.4 (no Ninja); AUDIO64 sound driver; CRI ADX 5.76 |
 | Build | Linux: `python tools/dc.py build ports/ecco-the-dolphin-defender-of-the-future-recomp` (70 s fresh with 32 shards) |
