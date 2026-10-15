@@ -2553,7 +2553,7 @@ int main(int argc, char** argv) {
                             auto snap = [&](std::chrono::steady_clock::time_point t) {
                                 const double k = std::round(static_cast<double>((t - vb).count()) /
                                                             static_cast<double>(per.count()));
-                                return vb + per * static_cast<long long>(k);
+                                return vb + per * static_cast<std::chrono::steady_clock::rep>(k);
                             };
                             const auto budget = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                                 sync.budget(period));
