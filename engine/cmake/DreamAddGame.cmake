@@ -26,6 +26,11 @@ set(DREAM_TRANSLATE_EXTRA_FLAGS "" CACHE STRING
 set(DREAM_GEN_SHARDS 1 CACHE STRING
     "Split each game's generated code into this many extra units, compiled in parallel (1 = one file)")
 
+# Cross builds (a console toolchain) cannot run the dream-translate they build: name a host build of
+# it here and the game units are translated with that one instead. Empty = the target in this tree.
+set(DREAM_TRANSLATE_EXECUTABLE "" CACHE FILEPATH
+    "Host dream-translate to use instead of building one (cross-compiling)")
+
 function(dream_add_game id)
   cmake_parse_arguments(ARG "BOOT_TEST" "TITLE" "" ${ARGN})
   if(NOT ARG_TITLE)
@@ -103,10 +108,14 @@ function(dream_add_game id)
   endif()
 
   separate_arguments(DREAM_TRANSLATE_EXTRA_FLAGS)
+  set(_translate dream-translate)
+  if(DREAM_TRANSLATE_EXECUTABLE)
+    set(_translate ${DREAM_TRANSLATE_EXECUTABLE})
+  endif()
   add_custom_command(
     OUTPUT ${_units} ${_headers}
-    COMMAND dream-translate game --config ${_toml_path} --out-dir ${_gen} ${_shard_flags} ${DREAM_TRANSLATE_EXTRA_FLAGS}
-    DEPENDS dream-translate ${_toml_path} ${_symbols} ${_bin}
+    COMMAND ${_translate} game --config ${_toml_path} --out-dir ${_gen} ${_shard_flags} ${DREAM_TRANSLATE_EXTRA_FLAGS}
+    DEPENDS ${_translate} ${_toml_path} ${_symbols} ${_bin}
     COMMENT "Translating ${ARG_TITLE}"
     VERBATIM)
 
