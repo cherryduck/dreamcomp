@@ -28,3 +28,16 @@ One section per port: paths, commands, keys, status. Skills read this instead of
 | Standard script | `--press start@600,start@900` → title flyby (~frame 2100), "PRESS START BUTTON" |
 | Not translated | `2_DP.BIN` (Dream Passport 2 browser for the online features) |
 | Status | 2026-10-06: boots, `scenario.py play --port jetgrindradio` reaches Gum's tutorial and skates the first street (0 untranslated / 0 unmapped); widescreen to 21:9 with the HUD corrected (polygon rule + one override); idle skip; translated = interpreted at attract frame 10040. Not yet: compared with Flycast, listened to by Daniel, played past the tutorial. Plan: the port's docs/PLAN.md |
+
+## Ecco the Dolphin: Defender of the Future (Europe) — `ecco-the-dolphin-defender-of-the-future-recomp`
+
+| | |
+|---|---|
+| Local repo | `ports/ecco-the-dolphin-defender-of-the-future-recomp` (branch `main`; no GitHub remote yet); dreamcomp fork `cherryduck/dreamcomp` branch `linux-ecco` |
+| Disc | MK-5103350 V1.003 (2000-05-09); boot `0.BIN` 2,969,164 bytes, SHA-1 `e6b209962f6d3d9565a4a6f8d430f1e921d264c0` |
+| SDK | CodeWarrior; Shinobi 1.43, Kamui2 16.3.2.4 (no Ninja); AUDIO64 sound driver; CRI ADX 5.76 |
+| Build | Linux: `python tools/dc.py build ports/ecco-the-dolphin-defender-of-the-future-recomp` (70 s fresh with 32 shards) |
+| Settings | `~/.config/dreamcomp/ecco/settings.ini`, VMU `vmu_a1.bin` beside it |
+| Scenarios | `python tools/scenario.py boot|menus|play|attract --port ecco` |
+| Port flags | none yet; Flycast widescreen entry exists (`0x8C275418`, `0x8C040E68`, `0x8C040D1C`) |
+| Status | 2026-10-15: boots, menus, new game, prologue film, first controllable scene; 0 untranslated over 20000 frames; translated = interpreted (TA) at frame 13100. Not yet: listened to, played past the first scene, widescreen |
