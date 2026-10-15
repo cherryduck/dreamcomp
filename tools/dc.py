@@ -259,7 +259,7 @@ def cmd_report(a) -> int:
 # folder, so a relative path written from the dreamcomp checkout (as the skills do) would land
 # somewhere that does not exist, and the engine's "cannot write" is easy to miss: make such paths
 # absolute against the caller's directory first.
-FILE_FLAGS = {"--suggest-config", "--profile", "--wav", "--report", "--dump-ta", "--dump-vram",
+FILE_FLAGS = {"--suggest-config", "--screenshot-dir", "--profile", "--wav", "--report", "--dump-ta", "--dump-vram",
               "--dump-flash", "--dump-aram", "--sample-file", "--settings", "--vmu", "--bindings",
               "--texture-pack", "--dump-textures", "--mod", "--disc", "--flash", "--capture-dir"}
 
