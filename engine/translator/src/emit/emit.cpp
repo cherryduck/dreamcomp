@@ -250,7 +250,8 @@ public:
         // resume_pc = 0 by the plain function, or at a block start / call-return address after a
         // non-local return. entry_pr is what an `rts` must return to; anything else is a non-local
         // return.
-        out << "static void " << name << (clone_suffix_.empty() ? "__resume" : clone_suffix_)
+        out << (clone_suffix_.empty() && opt_.shards > 1 ? "void " : "static void ") << name
+            << (clone_suffix_.empty() ? "__resume" : clone_suffix_)
             << "(Ctx& c, Memory& m, std::uint32_t resume_pc) {\n";
         out << "    [[maybe_unused]] const std::uint32_t entry_pr = c.pr;\n";
         // Poll points record the exact guest pc first: an interrupt handler that switches tasks
@@ -1709,7 +1710,7 @@ EmitResult emit_unit(const Image& image, const std::vector<FunctionSpec>& functi
     for (const auto& f : specs) {
         hdr << "void " << f.name << "(dream::sh4::Ctx& c, dream::Memory& m);\n";
         src << "void " << f.name << "(Ctx& c, Memory& m);\n";
-        src << "static void " << f.name
+        src << (options.shards > 1 ? "void " : "static void ") << f.name
             << "__resume(Ctx& c, Memory& m, std::uint32_t resume_pc);\n";
         // [hooks]: defined by the port; a missing definition is a link error, never a silent no-op.
         if (!f.hook.empty() && f.hook_entry)
@@ -1718,6 +1719,9 @@ EmitResult emit_unit(const Image& image, const std::vector<FunctionSpec>& functi
             src << "void dream_hook_exit_" << f.hook << "(Ctx& c, Memory& m);\n";
     }
     src << "\n";
+    // Sharded output: every part starts with the same includes and declarations.
+    const std::string prologue = src.str();
+    std::vector<std::string> bodies;
     // Pass 0: pool words the unit itself writes (run-time patched literals) are never folded.
     std::set<std::uint32_t> written;
     {
@@ -1849,6 +1853,8 @@ EmitResult emit_unit(const Image& image, const std::vector<FunctionSpec>& functi
         }
     }
     for (const auto& f : specs) {
+        std::ostringstream fsrc;
+        std::ostringstream& out = options.shards > 1 ? fsrc : src;
         const std::size_t before = result.fp_runtime_branches;
         FunctionEmitter fe(image, f, options, known, summaries, result);
         fe.set_written(&written);
@@ -1862,13 +1868,33 @@ EmitResult emit_unit(const Image& image, const std::vector<FunctionSpec>& functi
             FunctionEmitter fc(image, fast, options, known, summaries, scratch);
             fc.set_written(&written);
             fc.set_clone_suffix("__fpd");
-            src << "static void " << f.name << "__fpd(Ctx& c, Memory& m, std::uint32_t resume_pc);\n";
-            src << fc.run() << "\n";
+            out << "static void " << f.name << "__fpd(Ctx& c, Memory& m, std::uint32_t resume_pc);\n";
+            out << fc.run() << "\n";
             ++result.fp_entry_clones;
             result.fp_clone_branches += scratch.fp_runtime_branches;
             fe.set_fast_clone(f.fpscr_entry & 0x00180000u);
         }
-        src << body << fe.wrapper() << "\n";
+        out << body << fe.wrapper() << "\n";
+        if (options.shards > 1)
+            bodies.push_back(fsrc.str());
+    }
+    if (options.shards > 1) {
+        // Contiguous runs of functions, balanced by text size: the parts compile in about the
+        // same time, and neighbouring functions (which call each other most) stay together.
+        std::size_t total = 0;
+        for (const auto& b : bodies) total += b.size();
+        const std::size_t n = options.shards;
+        std::size_t i = 0, acc = 0;
+        for (std::size_t k = 0; k < n; ++k) {
+            std::string part = prologue;
+            const std::size_t goal = total * (k + 1) / n;
+            while (i < bodies.size() && (acc < goal || k + 1 == n)) {
+                acc += bodies[i].size();
+                part += bodies[i++];
+            }
+            part += "}  // namespace dream::gen\n";
+            result.parts.push_back(std::move(part));
+        }
     }
     src << "namespace {\n";
     if (options.overlay) {

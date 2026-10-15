@@ -59,6 +59,11 @@ struct EmitOptions {
     // for the default mode, chosen by its wrapper when the guest arrives in that mode (dreamcomp;
     // docs/emitter-design.md "Entry-mode clones"). Off: every such function keeps its runtime tests.
     bool fp_entry_clones = true;
+    // Split the function bodies over this many extra translation units (EmitResult::parts) so
+    // the C++ compiler can build them in parallel; 1 keeps the single-file output byte for byte.
+    // Above 1 the resume bodies get external linkage, since the table refers to them across
+    // units (dreamcomp).
+    unsigned shards = 1;
 };
 
 // A run of bytes inside a function that discovery never decoded. Often a literal pool, sometimes
@@ -68,7 +73,8 @@ struct CoverageGap {
 };
 
 struct EmitResult {
-    std::string source;                 // one translation unit
+    std::string source;                 // one translation unit (with shards: prologue + table)
+    std::vector<std::string> parts;     // with EmitOptions::shards > 1: the function bodies
     std::string header;                 // declarations of the emitted functions
     std::vector<std::string> warnings;  // per-instruction notes (unlowered ops etc.)
     std::size_t instructions = 0;

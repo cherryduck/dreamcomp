@@ -39,7 +39,7 @@ int usage(int code) {
                  "  dream-translate symbols --ghidra functions.json --out symbols.tsv "
                  "[--keep-conflicts]\n"
                  "  dream-translate game --config games/ID/ID.toml --out-dir DIR [--no-fold] "
-                 "[--trace] [--no-irq]\n",
+                 "[--trace] [--no-irq] [--shards N]\n",
                  dream::translator::version().data());
     return code;
 }
@@ -460,6 +460,12 @@ int translate_view(const dream::translator::GameConfig& cfg, const dream::transl
     {
         std::ofstream o(base.string() + ".cpp");
         o << res.source;
+        for (std::size_t k = 0; k < res.parts.size(); ++k) {
+            char suffix[32];
+            std::snprintf(suffix, sizeof suffix, "_part%02zu.cpp", k);
+            std::ofstream p(base.string() + suffix);
+            p << res.parts[k];
+        }
         std::ofstream h(base.string() + ".h");
         h << res.header;
     }
@@ -508,6 +514,8 @@ int cmd_game(int argc, char** argv) {
             opt.irq_checks = false;
         else if (!std::strcmp(argv[i], "--no-fp-clones"))
             opt.fp_entry_clones = false;
+        else if (!std::strcmp(argv[i], "--shards") && i + 1 < argc)
+            opt.shards = static_cast<unsigned>(std::max(1, std::atoi(argv[++i])));
         else
             return usage(2);
     }
@@ -559,6 +567,7 @@ int cmd_game(int argc, char** argv) {
         if (seeds_r.empty())
             seeds_r.push_back(view.base);
         dream::translator::EmitOptions view_opt = opt;
+        view_opt.shards = 1;  // relocated copies are small; only the main unit is split
         if (rel.no_fold)
             view_opt.fold_literals = false;
         view_opt.overlay = rel.overlay;
