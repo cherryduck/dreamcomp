@@ -13,6 +13,16 @@ set(DREAMCOMP_ROOT ${CMAKE_CURRENT_SOURCE_DIR} CACHE INTERNAL "dreamcomp source 
 # code instead of a crash, and the miss is reported for the next config round.
 set(DREAM_DEV_INTERPRETER ON CACHE BOOL "SH-4 interpreter fallback for untranslated code")
 set(DREAM_WERROR OFF CACHE BOOL "Warnings as errors in engine targets (engine CI keeps this on)")
+# The generated code of one title is a single file of a few hundred MB that compiles on one core
+# (Ecco: 244 MB, 514 s on a 32-thread machine). Split it once per hardware thread so the compiler
+# builds the parts in parallel; -DDREAM_GEN_SHARDS=1 restores the single file.
+cmake_host_system_information(RESULT _dc_threads QUERY NUMBER_OF_LOGICAL_CORES)
+if(_dc_threads LESS 1)
+  set(_dc_threads 1)
+elseif(_dc_threads GREATER 64)
+  set(_dc_threads 64)
+endif()
+set(DREAM_GEN_SHARDS ${_dc_threads} CACHE STRING "Parts the generated game code is split into")
 if(NOT PROJECT_IS_TOP_LEVEL)
   set(DREAM_BUILD_TESTS OFF CACHE BOOL "Engine unit tests (on when building dreamcomp itself)")
 endif()
