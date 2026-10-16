@@ -52,10 +52,10 @@ bool Presenter::create(Context& ctx, VkRenderPass render_pass) {
         error_ = "vkCreateDescriptorSetLayout failed for the presenter";
         return false;
     }
-    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
+    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 + kExtSets};
     VkDescriptorPoolCreateInfo dpci{};
     dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    dpci.maxSets = 2;  // the uploaded image, and an external one for draw_view
+    dpci.maxSets = 1 + kExtSets;  // the uploaded image, and draw_view's ring
     dpci.poolSizeCount = 1;
     dpci.pPoolSizes = &size;
     if (vkCreateDescriptorPool(dev, &dpci, nullptr, &pool_) != VK_SUCCESS) {
@@ -67,8 +67,10 @@ bool Presenter::create(Context& ctx, VkRenderPass render_pass) {
     dsai.descriptorPool = pool_;
     dsai.descriptorSetCount = 1;
     dsai.pSetLayouts = &set_layout_;
-    if (vkAllocateDescriptorSets(dev, &dsai, &set_) != VK_SUCCESS ||
-        vkAllocateDescriptorSets(dev, &dsai, &ext_set_) != VK_SUCCESS) {
+    bool sets_ok = vkAllocateDescriptorSets(dev, &dsai, &set_) == VK_SUCCESS;
+    for (auto& s : ext_sets_)
+        sets_ok = sets_ok && vkAllocateDescriptorSets(dev, &dsai, &s) == VK_SUCCESS;
+    if (!sets_ok) {
         error_ = "vkAllocateDescriptorSets failed for the presenter";
         return false;
     }
@@ -227,8 +229,11 @@ void Presenter::destroy() {
     sampler_ = VK_NULL_HANDLE;
     pool_ = VK_NULL_HANDLE;
     set_ = VK_NULL_HANDLE;
-    ext_set_ = VK_NULL_HANDLE;
-    ext_view_ = VK_NULL_HANDLE;
+    for (unsigned i = 0; i < kExtSets; ++i) {
+        ext_sets_[i] = VK_NULL_HANDLE;
+        ext_views_[i] = VK_NULL_HANDLE;
+    }
+    ext_next_ = 0;
     set_layout_ = VK_NULL_HANDLE;
     staging_.destroy();
     ctx_ = nullptr;
@@ -360,9 +365,12 @@ bool Presenter::draw(VkCommandBuffer cmd, VkExtent2D target) {
 
 bool Presenter::draw_view(VkCommandBuffer cmd, VkImageView view, std::uint32_t width,
                           std::uint32_t height, VkExtent2D target) {
-    if (!view || !ext_set_)
+    const unsigned slot = ext_next_;
+    if (!view || !ext_sets_[slot])
         return false;
-    if (view != ext_view_) {
+    ext_next_ = (ext_next_ + 1) % kExtSets;
+    VkDescriptorSet const ext_set_ = ext_sets_[slot];
+    if (view != ext_views_[slot]) {
         VkDescriptorImageInfo dii{};
         dii.sampler = sampler_;
         dii.imageView = view;
@@ -375,7 +383,7 @@ bool Presenter::draw_view(VkCommandBuffer cmd, VkImageView view, std::uint32_t w
         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         write.pImageInfo = &dii;
         vkUpdateDescriptorSets(ctx_->device(), 1, &write, 0, nullptr);
-        ext_view_ = view;
+        ext_views_[slot] = view;
     }
     return draw_set(cmd, ext_set_, width, height, target);
 }

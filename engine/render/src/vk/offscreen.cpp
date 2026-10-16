@@ -69,14 +69,35 @@ bool Offscreen::create(Context& ctx, std::uint32_t width, std::uint32_t height) 
     after.dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
     after.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 
+    // Before (dreamcomp): the attachments' clears are layout transitions from UNDEFINED, and they
+    // must come after the presenter's reads of the previous frame (fragment shader), a readback
+    // (transfer) and the previous frame's depth writes. A pipeline barrier before the render pass
+    // does not order a transition the render pass makes; only this dependency does
+    // (synchronization validation: WRITE_AFTER_READ, WRITE_AFTER_WRITE).
+    VkSubpassDependency before{};
+    before.srcSubpass = VK_SUBPASS_EXTERNAL;
+    before.dstSubpass = 0;
+    before.srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT |
+                          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                          VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    before.srcAccessMask =
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    before.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                          VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                          VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    before.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    const VkSubpassDependency deps[2] = {before, after};
+
     VkRenderPassCreateInfo rpci{};
     rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     rpci.attachmentCount = 2;
     rpci.pAttachments = attachments;
     rpci.subpassCount = 1;
     rpci.pSubpasses = &subpass;
-    rpci.dependencyCount = 1;
-    rpci.pDependencies = &after;
+    rpci.dependencyCount = 2;
+    rpci.pDependencies = deps;
     if (vkCreateRenderPass(ctx.device(), &rpci, nullptr, &render_pass_) != VK_SUCCESS) {
         error_ = "vkCreateRenderPass failed for the offscreen target";
         return false;
