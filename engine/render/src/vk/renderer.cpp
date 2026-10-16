@@ -1,4 +1,5 @@
 // See renderer.h.
+#include <cmath>
 #include "dream/render/vk/renderer.h"
 
 #include <algorithm>
@@ -488,6 +489,10 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
             float nearest = 1e30f;
             for (std::uint32_t i = 0; i < p.count; ++i)
                 nearest = std::min(nearest, frame.vertices[p.first + i].z);
+            // A piece clip_far_polygons cut sorts as the triangle (or strip) it came from.
+            const float key = per_triangle ? p.sort_triangle : p.sort_strip;
+            if (blended && !std::isnan(key))
+                nearest = key;
             items.push_back({&p, nearest, blended, alpha_test, p.first, p.count, false});
         }
     };

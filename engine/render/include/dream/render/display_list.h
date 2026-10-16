@@ -14,6 +14,7 @@
 // pass.
 #pragma once
 
+#include <limits>
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -57,6 +58,11 @@ struct Polygon {
     // user-tile-clip parameter's tiles, 32 pixels each, inclusive. Mode 2 draws only inside it,
     // mode 3 only outside (Flycast tileclip / drawer SetTileClip).
     std::uint16_t clip_x0 = 0, clip_y0 = 0, clip_x1 = 1280, clip_y1 = 480;
+    // Translucent sort keys of the triangle and strip this polygon was cut from by
+    // clip_far_polygons (dreamcomp); NaN otherwise. A piece must sort where its parent would: the
+    // far vertex it lost is what made the parent sort nearest.
+    float sort_triangle = std::numeric_limits<float>::quiet_NaN();
+    float sort_strip = std::numeric_limits<float>::quiet_NaN();
 };
 
 // A modifier volume triangle (shadows and volume effects). These are not strips: each is three
@@ -97,6 +103,16 @@ struct Frame {
 // outlined. Clamping instead is right whenever the polygon never leaves the unit square, and does
 // not touch the interior boundary between two quads that share a larger texture.
 bool polygon_tiles(const Frame& frame, const Polygon& polygon);
+
+// Clips the polygons that reach far off the screen to a rectangle `limit` guest pixels around it
+// (dreamcomp), and returns how many it clipped. A game hands the PowerVR geometry that passes
+// behind the camera: Ecco's water surface has vertices at x = -56,000,000 with 1/w = 1000. The
+// PowerVR copes, and so does NVIDIA's clipper; AMD's (RADV, the PS5) loses so much precision on
+// a triangle that size that its depth comes out wrong in bands, and the surface showed through
+// the rock in stripes. Everything the shaders interpolate is linear in screen space here (1/w,
+// and colour and texture coordinates multiplied by it), so the cut is exact: an affected strip
+// becomes separate triangles (same words, same facing), each clipped, each fanned back out.
+std::size_t clip_far_polygons(Frame& frame, float limit = 2048.0f);
 
 // Feed it the same 32-byte chunks the Tile Accelerator FIFO receives.
 class DisplayList {
