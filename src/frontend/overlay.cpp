@@ -317,6 +317,11 @@ struct Overlay::Impl {
         }
         context = Rml::CreateContext("overlay", Rml::Vector2i(1280, 720));
         UiConfig cfg{ctx.settings, ctx.port, ctx.config, ctx.exe_dir, ctx.version};
+        cfg.can_window = ctx.can_window;
+        cfg.can_open_external = ctx.can_open_external;
+        cfg.can_quit = ctx.can_quit;
+        cfg.keyboard = ctx.keyboard;
+        cfg.playstation = ctx.playstation;
         UiHost host;
         host.close_panel = [this] { close(); };
         host.exit_game = [this] {
@@ -386,6 +391,8 @@ struct Overlay::Impl {
         if (!init()) {
             // No menu to show: Escape still has to end the game somehow.
             open = false;
+            if (!ctx.can_quit)
+                return;  // a console: the game goes on (the reason is in the log)
             post([] {
                 if (dream::host::host_controls().quit)
                     dream::host::host_controls().quit();

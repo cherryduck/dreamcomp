@@ -33,6 +33,11 @@ constexpr const char* kGlyphA = "\xE2\x86\xA7";      // U+21A7
 constexpr const char* kGlyphB = "\xE2\x86\xA6";      // U+21A6
 constexpr const char* kGlyphLB = "\xE2\x86\x98";     // U+2198
 constexpr const char* kGlyphRB = "\xE2\x86\x99";     // U+2199
+// PlayStation's (dreamcomp): Cross, Circle, L1, R1
+constexpr const char* kGlyphCross = "\xE2\x87\xA3";   // U+21E3
+constexpr const char* kGlyphCircle = "\xE2\x87\xA2";  // U+21E2
+constexpr const char* kGlyphL1 = "\xE2\x86\xB0";      // U+21B0
+constexpr const char* kGlyphR1 = "\xE2\x86\xB1";      // U+21B1
 constexpr const char* kGlyphEnter = "\xE2\x90\xAE";  // U+242E
 constexpr const char* kGlyphEsc = "\xE2\x90\xAF";    // U+242F
 constexpr const char* kCheck = "\xE2\x9C\x93";
@@ -114,7 +119,8 @@ constexpr char32_t kIconCross = 0x2717;       // PF_ICON_CROSS
 
 // A binding as PromptFont glyphs (RecompFrontend's table), or "" when PromptFont has no glyph
 // for it; the caller then shows the name as text.
-std::string binding_glyph(const dream::render::Binding& b) {
+std::string binding_glyph(const dream::render::Binding& b, bool ps = false,
+                          bool back_is_touchpad = false) {
     using dream::render::BindSource;
     const std::string& n = b.code;
     if (b.source == BindSource::Key) {
@@ -151,6 +157,21 @@ std::string binding_glyph(const dream::render::Binding& b) {
             return "R" + utf8(0x2429);
         return {};
     }
+    if (b.source == BindSource::Button && ps) {
+        // PlayStation glyphs (dreamcomp): Cross, Circle, Square, Triangle, L1, R1, Options; Back
+        // is Create, or the touch pad where the platform reports its click as Back (the PS5's).
+        static const std::pair<const char*, char32_t> ps_buttons[] = {
+            {"a", 0x21E3}, {"b", 0x21E2}, {"x", 0x21E0}, {"y", 0x21E1},
+            {"leftshoulder", 0x21B0}, {"rightshoulder", 0x21B1}, {"start", 0x21E8}};
+        for (const auto& [name, cp] : ps_buttons)
+            if (n == name)
+                return utf8(cp);
+        if (n == "back")
+            return utf8(back_is_touchpad ? 0x21E7 : 0x21E6);
+    }
+    if (b.source == BindSource::Axis && ps && (n == "lefttrigger" || n == "righttrigger") &&
+        b.sign >= 0)
+        return utf8(n == "lefttrigger" ? 0x21B2 : 0x21B3);  // L2, R2
     if (b.source == BindSource::Button) {
         static const std::pair<const char*, char32_t> buttons[] = {
             {"a", 0x21A7},           {"b", 0x21A6},          {"x", 0x21A4},
@@ -639,8 +660,8 @@ std::string MenuUi::page_launcher() const {
              std::string(kEllipsis) + "</div>";
     s += "<div id=\"version\">" + esc(cfg_.version) + "</div>";
     s += "<div id=\"l-hints\">";
-    if (!pads_.empty())
-        s += glyph(kGlyphA) + hint("Select");
+    if (has_pad())
+        s += glyph(glyph_a()) + hint("Select");
     else
         s += glyph(kGlyphEnter) + hint("Select");
     s += "</div>";
@@ -668,7 +689,8 @@ std::string MenuUi::tab_general() {
                    "<b>Exact 59.94 Hz</b> keeps the console's timing; a 60 Hz screen then shows "
                    "one frame twice about every 17 seconds.",
                    false);
-    s += row_button("r-about", "readme", "About", "Read me", kAboutText);
+    if (cfg_.can_open_external)
+        s += row_button("r-about", "readme", "About", "Read me", kAboutText);
     return s;
 }
 
@@ -683,11 +705,16 @@ std::string MenuUi::controls_cards() {
         std::clamp(cfg_.port ? cfg_.port->players : 4u, 1u, 4u);
     std::string s = "<div id=\"ccards\">";
     for (unsigned p = 0; p < players; ++p) {
-        const bool pad = p < pads_.size();
+        // A console has no keyboard: player 1 is its controller, connected or not yet.
+        const bool pad = p < pads_.size() || (p == 0 && !cfg_.keyboard);
         const bool usable = p == 0 || pad;
         std::string icon = utf8(pad || p > 0 ? kDeviceGamepad : kDeviceKeyboard);
-        std::string dev = pad ? pads_[p] : (p == 0 ? std::string("Keyboard") : "No controller");
-        std::string dev2 = p == 0 && pad ? "+ Keyboard" : (p == 0 ? "Connect a controller at any time" : "");
+        std::string dev = p < pads_.size() ? pads_[p]
+                          : pad          ? std::string("Controller")
+                          : (p == 0 ? std::string("Keyboard") : "No controller");
+        std::string dev2 = !cfg_.keyboard ? ""
+                           : p == 0 && pad ? "+ Keyboard"
+                                           : (p == 0 ? "Connect a controller at any time" : "");
         s += "<div class=\"ccard-wrap\"><div class=\"ccard-label\">Player " + std::to_string(p + 1) +
              "</div><div class=\"ccard" + std::string(usable ? "" : " empty") +
              "\"><div class=\"cicon\">" + icon + "</div><div class=\"cdev\">" + esc(dev) +
@@ -698,8 +725,11 @@ std::string MenuUi::controls_cards() {
              (usable ? "ctl-edit:" + std::to_string(p) : std::string()) +
              "\">Edit Profile</div></div>";
     }
-    s += "</div><div class=\"cnote\">Controllers play in the order they are connected; the "
-         "keyboard plays as player 1. Every controller uses the controller profile.</div>";
+    s += cfg_.keyboard
+             ? "</div><div class=\"cnote\">Controllers play in the order they are connected; the "
+               "keyboard plays as player 1. Every controller uses the controller profile.</div>"
+             : "</div><div class=\"cnote\">Controllers play in the order they are connected. "
+               "Every controller uses the same profile.</div>";
     return s;
 }
 
@@ -710,7 +740,7 @@ std::string MenuUi::controls_mappings() {
         s += std::string("<div class=\"ctitle rec\">") +
              (kb ? "Press a key for " : "Press a button or move a stick for ") +
              ctl_label(capture_.control) + "</div><div class=\"pspacer\"></div><div "
-             "class=\"chint\">" + (kb ? "Esc cancels" : "Select or Esc cancels") + "</div>";
+             "class=\"chint\">" + (kb ? "Esc cancels" : cfg_.keyboard ? "Select or Esc cancels" : "The touch pad cancels") + "</div>";
     else
         s += std::string("<div class=\"ctitle\">Editing: ") +
              (kb ? "Keyboard profile" : "Controller profile") +
@@ -719,8 +749,12 @@ std::string MenuUi::controls_mappings() {
     s += "</div>";
     const auto& dev = editing();
     const std::string how =
-        kb ? "Click a box, or press Enter on it, then press the key to use. Escape cancels."
-           : "Click a box, or press " + glyph(kGlyphA) +
+        !cfg_.keyboard
+            ? "Press " + std::string(glyph(glyph_a())) +
+                  " on a box, then press the button or move the stick to use. The touch pad "
+                  "cancels."
+        : kb ? "Click a box, or press Enter on it, then press the key to use. Escape cancels."
+           : "Click a box, or press " + glyph(glyph_a()) +
                  " on it, then press the button or move the stick to use. Select or Escape "
                  "cancels.";
     const std::string who = kb ? "The keyboard plays as player 1, together with the first "
@@ -745,7 +779,7 @@ std::string MenuUi::controls_mappings() {
             if (rec)
                 inner = "<span class=\"brec\"></span>";
             else if (b.bound()) {
-                const std::string g = binding_glyph(b);
+                const std::string g = binding_glyph(b, ps_glyphs(), !cfg_.keyboard);
                 inner = g.empty() ? "<span class=\"btext\">" + esc(b.label()) + "</span>"
                                   : "<span class=\"bglyph\">" + g + "</span>";
             }
@@ -770,12 +804,15 @@ std::string MenuUi::controls_footer() {
                              (kb ? "keyboard" : "controller") +
                              " profile back to the original layout.",
                          true};
+    const std::string reset =
+        "<div id=\"c-reset\" class=\"button warning focusable\" act=\"ctl-reset\">Reset to "
+        "defaults</div>";
+    if (!cfg_.keyboard)
+        return reset;  // a console: the controller profile only
     return std::string("<div id=\"c-dev\" class=\"ctoggle focusable\" act=\"ctl-device\"><span "
                        "class=\"tg") +
            (kb ? "" : " on") + "\">" + utf8(kDeviceGamepad) + "</span><span class=\"tg" +
-           (kb ? " on" : "") + "\">" + utf8(kDeviceKeyboard) +
-           "</span></div><div id=\"c-reset\" class=\"button warning focusable\" "
-           "act=\"ctl-reset\">Reset to defaults</div>";
+           (kb ? " on" : "") + "\">" + utf8(kDeviceKeyboard) + "</span></div>" + reset;
 }
 
 dream::render::DeviceBindings& MenuUi::editing() {
@@ -912,10 +949,11 @@ std::string MenuUi::tab_graphics() {
                         "the window, whatever its shape, without stretching anything."
                       : "This port shows the original 4:3 picture only.",
                    true, {true, ws});
-    s += row_radio("fullscreen", "Window mode", {{"false", "Windowed"}, {"true", "Fullscreen"}},
-                   draft_.get_bool("fullscreen", false) ? "true" : "false",
-                   "Borderless fullscreen on the window's display. Alt+Enter switches at any time.",
-                   true);
+    if (cfg_.can_window)
+        s += row_radio("fullscreen", "Window mode", {{"false", "Windowed"}, {"true", "Fullscreen"}},
+                       draft_.get_bool("fullscreen", false) ? "true" : "false",
+                       "Borderless fullscreen on the window's display. Alt+Enter switches at any time.",
+                       true);
 #ifdef _WIN32
     s += row_radio("latency", "Latency", {{"standard", "Standard"}, {"low", "Low"}},
                    draft_.get("latency", "standard") == "low" ? "low" : "standard",
@@ -962,7 +1000,8 @@ std::string MenuUi::tab_mods() {
     const auto dir = texture_pack_dir(pack, config_dir_);
     s += row_onoff("texture_pack", "Texture pack", texture_pack_on(pack),
                     "Replaces the game's textures with the PNG files in<br/>" + esc(u8(dir)), false);
-    s += row_button("r-opentex", "open-textures", "Open texture folder", "Open",
+    if (cfg_.can_open_external)
+        s += row_button("r-opentex", "open-textures", "Open texture folder", "Open",
                     "Opens " + esc(u8(dir)) + " (created if missing). Put a pack's files there.");
     s += row_onoff("dump_textures", "Dump textures", draft_.get_bool("dump_textures", false),
                     "For pack authors: writes every new texture the game uses to<br/>" +
@@ -999,7 +1038,8 @@ std::string MenuUi::tab_mods() {
     }
     if (mods.empty())
         s += "<div class=\"pnote\">No mods installed.</div>";
-    s += row_button("r-openmods", "open-mods", "Open mods folder", "Open",
+    if (cfg_.can_open_external)
+        s += row_button("r-openmods", "open-mods", "Open mods folder", "Open",
                     "Opens " + esc(u8(mods_dir)) + " (created if missing). Add each mod as a "
                     "folder there.<br/><br/>" + mod_help);
     return s;
@@ -1012,8 +1052,10 @@ std::string MenuUi::page_panel() {
         s += std::string("<div id=\"tab-") + kTabs[i][0] + "\" class=\"ptab focusable" +
              (i == tab_ ? " active" : "") + "\" act=\"tab:" + std::to_string(i) + "\">" +
              kTabs[i][1] + "</div>";
-    s += "<div class=\"pspacer\"></div><div id=\"p-quit\" class=\"pquit focusable\" "
-         "act=\"ask-quit\">Quit Game</div><div id=\"p-close\" class=\"pclose focusable\" "
+    s += "<div class=\"pspacer\"></div>";
+    if (cfg_.can_quit)
+        s += "<div id=\"p-quit\" class=\"pquit focusable\" act=\"ask-quit\">Quit Game</div>";
+    s += "<div id=\"p-close\" class=\"pclose focusable\" "
          "act=\"close\">\xC3\x97</div></div><div id=\"pbody\"" +
          std::string(tab_ == 1 && ctl_view_ == 0 ? " class=\"wide\"" : "") +
          "><div id=\"prows\">";
@@ -1026,9 +1068,9 @@ std::string MenuUi::page_panel() {
     }
     s += "</div><div id=\"pdesc\"><div id=\"pdesc-title\"></div><div id=\"pdesc-text\"></div><div "
          "id=\"pdesc-note\"></div></div></div><div id=\"pfoot\"><div id=\"phints\">";
-    if (!pads_.empty())
-        s += glyph(kGlyphA) + hint("Select") + glyph(kGlyphB) + hint("Close") + glyph(kGlyphLB) +
-             glyph(kGlyphRB) + hint("Tabs");
+    if (has_pad())
+        s += glyph(glyph_a()) + hint("Select") + glyph(glyph_b()) + hint("Close") +
+             glyph(glyph_lb()) + glyph(glyph_rb()) + hint("Tabs");
     else
         s += glyph(kGlyphEnter) + hint("Select") + glyph(kGlyphEsc) + hint("Close") +
              keycap("Q") + keycap("E") + hint("Tabs");
@@ -1270,11 +1312,11 @@ void MenuUi::run_act(const std::string& act, Rml::Event* ev) {
     } else if (kind == "close") {
         close_panel();
     } else if (kind == "exit") {
-        if (host_.exit_game)
+        if (host_.exit_game && cfg_.can_quit)
             host_.exit_game();
     } else if (kind == "modal-ok") {
         back();
-    } else if (kind == "ask-quit") {
+    } else if (kind == "ask-quit" && cfg_.can_quit) {
         modal_open_ = true;
         modal_ = {"Quit " + title() + "?",
                   mode_ == Mode::InGame
@@ -1318,6 +1360,9 @@ void MenuUi::run_act(const std::string& act, Rml::Event* ev) {
         }
     } else if (kind == "mod" || kind == "modup" || kind == "moddown") {
         mod_action(kind, arg);
+    } else if ((kind == "open-textures" || kind == "open-mods" || kind == "readme") &&
+               !cfg_.can_open_external) {
+        // not on this platform (the button is not shown either)
     } else if (kind == "open-textures") {
         open_folder(texture_pack_dir(draft_.get("texture_pack"), config_dir_));
     } else if (kind == "open-mods") {
@@ -1332,12 +1377,12 @@ void MenuUi::run_act(const std::string& act, Rml::Event* ev) {
     } else if (kind == "ctl-edit") {
         const unsigned p = static_cast<unsigned>(std::atoi(arg.c_str()));
         ctl_view_ = 1;
-        ctl_device_ = p < pads_.size() ? 1 : 0;
+        ctl_device_ = p < pads_.size() || !cfg_.keyboard ? 1 : 0;
         want_focus_ = "s-" + id_safe(dream::render::pad_control_key(kCtlRows[0].c)) + "-0";
         dirty_ = true;
     } else if (kind == "ctl-back") {
         back();
-    } else if (kind == "ctl-device") {
+    } else if (kind == "ctl-device" && cfg_.keyboard) {
         ctl_device_ = 1 - ctl_device_;
         capture_.active = false;
         want_focus_ = "c-dev";
@@ -1538,6 +1583,11 @@ void MenuUi::navigate(Rml::Element* focus, Rml::Input::KeyIdentifier key) {
 
 // ---- input --------------------------------------------------------------------------------------
 
+const char* MenuUi::glyph_a() const { return ps_glyphs() ? kGlyphCross : kGlyphA; }
+const char* MenuUi::glyph_b() const { return ps_glyphs() ? kGlyphCircle : kGlyphB; }
+const char* MenuUi::glyph_lb() const { return ps_glyphs() ? kGlyphL1 : kGlyphLB; }
+const char* MenuUi::glyph_rb() const { return ps_glyphs() ? kGlyphR1 : kGlyphRB; }
+
 void MenuUi::refresh_pads() {
     std::vector<std::string> names;
     int count = 0;
@@ -1545,6 +1595,11 @@ void MenuUi::refresh_pads() {
         for (int i = 0; i < count; ++i) {
             const char* n = SDL_GetGamepadNameForID(ids[i]);
             names.push_back(n && *n ? n : "Controller");
+            if (i == 0) {
+                const SDL_GamepadType t = SDL_GetGamepadTypeForID(ids[i]);
+                ps_pad_ = t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 ||
+                          t == SDL_GAMEPAD_TYPE_PS5;
+            }
         }
         SDL_free(ids);
     }

@@ -707,6 +707,12 @@ public:
             oc.config = config_path_;
             oc.exe_dir = exe_dir_;
             oc.version = version_line();
+#ifdef DREAMCOMP_CONSOLE
+            // A console title (DREAMCOMP_CONSOLE, set by the platform's build): no windows, no
+            // desktop programs, no quitting from the menu.
+            oc.can_window = oc.can_open_external = oc.can_quit = oc.keyboard = false;
+            oc.playstation = true;  // the one console port there is: the PS5's
+#endif
             oc.applied = [this] { apply_live(); };
             // The F1 HUD editor (src/frontend/hud_editor.cpp). hud_edit and hud_save are run on
             // the game thread by the overlay (posted), the snapshot is handed over under a mutex.
