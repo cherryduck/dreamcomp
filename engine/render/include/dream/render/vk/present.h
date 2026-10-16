@@ -68,6 +68,14 @@ public:
     bool draw(VkCommandBuffer cmd, VkExtent2D target);
     // Draws an image that already lives on the GPU (the offscreen render target, in
     // SHADER_READ_ONLY layout) instead of the uploaded one: no host round trip (dreamcomp).
+    // Forgets which views draw_view's sets hold (dreamcomp). Call when an image they may show is
+    // destroyed: its replacement can get the same handle value (the driver reuses the memory), and
+    // the set would then go on sampling the destroyed image (a GPU page fault on the PS5, after the
+    // render target is rebuilt for a new aspect ratio or scale). The device must be idle.
+    void forget_views() {
+        for (auto& v : ext_views_)
+            v = VK_NULL_HANDLE;
+    }
     bool draw_view(VkCommandBuffer cmd, VkImageView view, std::uint32_t width,
                    std::uint32_t height, VkExtent2D target);
 

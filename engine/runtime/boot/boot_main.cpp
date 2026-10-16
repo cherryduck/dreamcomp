@@ -340,6 +340,9 @@ struct Live {
         if (w == offscreen.width() && h == offscreen.height())
             return;
         vkDeviceWaitIdle(window.context().device());
+        // The presenter's sets name the old views by handle; the new ones may reuse the values.
+        presenter.forget_views();
+        overlay_presenter.forget_views();
         const bool readback = offscreen.readback;
         offscreen.destroy();
         offscreen.readback = readback;
@@ -2476,6 +2479,10 @@ int main(int argc, char** argv) {
         for (auto* e : dream::host::extensions())
             if (e->wants_overlay())
                 live->overlays.push_back(e);
+        // DREAM_NO_MENU=1 (dreamcomp): no menu at all, for a platform whose settings are fixed
+        // (the PS5 title): the pad's Back button is the game's, never the controls screen.
+        if (const char* nm = std::getenv("DREAM_NO_MENU"); nm && *nm == '1')
+            live->window.set_pad_menu_button(false);
         if (!live->overlays.empty()) {
             live->window.set_escape_quits(false);
             live->window.set_pad_menu_button(false);
