@@ -635,6 +635,50 @@ std::size_t clip_far_polygons(Frame& frame, float limit) {
         }
         list.swap(out);
     }
+    // Modifier-volume triangles too (dreamcomp): shadow volumes reach down and, with the camera
+    // tilted up, behind it (Ecco's dolphins: x = -1e8). Each is a parity flip in the stencil, so a
+    // coverage error from the clipper is a line of wrongly shaded pixels (the PS5's streaks below
+    // distant dolphins). The pieces fan a convex polygon, so each pixel is covered by one of them
+    // as it was by the triangle; outside the rectangle there is nothing to shade.
+    bool any_mod = false;
+    for (const auto& m : frame.modifiers)
+        for (int k = 0; k < 3 && !any_mod; ++k)
+            any_mod = far(Vertex{m.x[k], m.y[k], m.z[k]});
+    if (any_mod) {
+        std::vector<ModifierTriangle> out;
+        out.reserve(frame.modifiers.size() + 64);
+        for (const auto& m : frame.modifiers) {
+            bool hit = false, finite = true;
+            for (int k = 0; k < 3; ++k) {
+                hit = hit || far(Vertex{m.x[k], m.y[k], m.z[k]});
+                finite = finite && std::isfinite(m.x[k]) && std::isfinite(m.y[k]) &&
+                         std::isfinite(m.z[k]);
+            }
+            if (!hit || !finite) {
+                out.push_back(m);
+                continue;
+            }
+            ++clipped;
+            std::vector<ClipVertex> poly;
+            for (int k = 0; k < 3; ++k)
+                poly.push_back(ClipVertex{m.x[k], m.y[k], m.z[k], 0, 0, {}, {}});
+            clip_edge(poly, [&](const ClipVertex& v) { return v.x - x0; });
+            clip_edge(poly, [&](const ClipVertex& v) { return x1 - v.x; });
+            clip_edge(poly, [&](const ClipVertex& v) { return v.y - y0; });
+            clip_edge(poly, [&](const ClipVertex& v) { return y1 - v.y; });
+            for (std::size_t i = 1; i + 1 < poly.size(); ++i) {
+                ModifierTriangle t = m;
+                const ClipVertex* src[3] = {&poly[0], &poly[i], &poly[i + 1]};
+                for (int k = 0; k < 3; ++k) {
+                    t.x[k] = static_cast<float>(src[k]->x);
+                    t.y[k] = static_cast<float>(src[k]->y);
+                    t.z[k] = static_cast<float>(src[k]->z);
+                }
+                out.push_back(t);
+            }
+        }
+        frame.modifiers.swap(out);
+    }
     return clipped;
 }
 
