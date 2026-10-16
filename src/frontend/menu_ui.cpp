@@ -931,9 +931,10 @@ std::string MenuUi::tab_graphics() {
     const bool ws = cfg_.port && cfg_.port->widescreen;
     const bool anam = cfg_.port && cfg_.port->widescreen_anamorphic;
     std::string s;
-    const int scale = std::clamp(draft_.get_int("scale", 2), 1, 8);
+    const int top = std::clamp(cfg_.max_scale, 1, 8);
+    const int scale = std::clamp(draft_.get_int("scale", cfg_.default_scale), 1, top);
     std::vector<Choice> scales;
-    for (int i = 1; i <= 8; ++i)
+    for (int i = 1; i <= top; ++i)
         scales.push_back({std::to_string(i), i == 1 ? std::string("Original") : std::to_string(i) + "x"});
     s += row_radio("scale", "Resolution", scales, std::to_string(scale),
                    "Draws the 3D scene at a multiple of the console's 640\xC3\x97" "480. Higher is "
@@ -1193,8 +1194,9 @@ void MenuUi::set_tab(int t) {
 
 void MenuUi::adjust(const std::string& key, int step) {
     if (key == "scale") {
-        const int v = std::clamp(draft_.get_int("scale", 2), 1, 8) + step;
-        draft_.set("scale", std::to_string(((v - 1) % 8 + 8) % 8 + 1));
+        const int top = std::clamp(cfg_.max_scale, 1, 8);
+        const int v = std::clamp(draft_.get_int("scale", cfg_.default_scale), 1, top) + step;
+        draft_.set("scale", std::to_string(((v - 1) % top + top) % top + 1));
     } else if (key == "aspect" && cfg_.port && cfg_.port->widescreen) {
         draft_.set("aspect", cycle(aspect_choices(true, cfg_.port->max_aspect),
                                    draft_.get("aspect", "16:9"), step));

@@ -68,6 +68,8 @@ struct OverlayContext {
     bool can_window = true;        // Graphics: Window mode
     bool can_open_external = true; // Open texture / mods folder, Read me
     bool can_quit = true;          // Quit Game
+    int max_scale = 8;             // highest Resolution offered (the PS5: 5)
+    int default_scale = 2;         // Resolution when the settings have none (the PS5: 5)
     bool keyboard = true;          // false: no keyboard; hints and Controls are the pad's only
     bool playstation = false;      // PlayStation button glyphs whatever pad SDL reports
     std::function<void()> applied;  // after Apply: re-read the settings that apply live
