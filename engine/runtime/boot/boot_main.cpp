@@ -441,6 +441,15 @@ struct Live {
         if (dream::render::add_background(decoder.frame(), pvr_.reg_block(), memory_.vram(),
                                           dream::mem::DcMemory::kVramSize))
             ++backgrounds;
+        // Geometry reaching far off the screen, cut to a sane rectangle (dreamcomp): AMD's
+        // clipper loses depth precision on triangles millions of pixels across (Ecco's water
+        // surface, through the rocks on the PS5). DREAM_NO_FAR_CLIP=1 turns it off.
+        static const bool no_far_clip = [] {
+            const char* e = std::getenv("DREAM_NO_FAR_CLIP");
+            return e && *e == '1';
+        }();
+        if (!no_far_clip)
+            far_clipped += dream::render::clip_far_polygons(decoder.frame());
         for (auto* e : dream::host::extensions()) e->on_frame(decoder.frame());
         const dream::render::Frame& frame = decoder.frame();
         // PT_ALPHA_REF: the punch-through threshold the guest chose, which changes per scene.
@@ -1101,7 +1110,7 @@ struct Live {
     std::vector<std::uint32_t> pixels;
     std::string error;
     std::uint64_t rendered = 0, written_back = 0, presented = 0, palette_changes = 0,
-                  decoded_frames = 0, backgrounds = 0;
+                  decoded_frames = 0, backgrounds = 0, far_clipped = 0;
     std::uint32_t target_address = 0;
     std::uint64_t guest_frame = 0;
     std::vector<std::uint32_t> last_stream;
@@ -3040,6 +3049,9 @@ int main(int argc, char** argv) {
             static_cast<unsigned long long>(live->written_back), live->renderer.textures().decoded,
             live->renderer.textures().failed, live->renderer.textures().overwritten,
             static_cast<unsigned long long>(live->palette_changes));
+        if (live->far_clipped)
+            std::printf("window: %llu polygons cut to the screen's surroundings (far off-screen vertices)\n",
+                        static_cast<unsigned long long>(live->far_clipped));
         if (const auto& r = live->renderer.textures().replacer(); r.active())
             std::printf(
                 "textures: %llu hashed (%.1f ms), %u replaced from the pack (%u failed to load, "

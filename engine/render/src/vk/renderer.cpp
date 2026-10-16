@@ -1,4 +1,5 @@
 // See renderer.h.
+#include <cmath>
 #include "dream/render/vk/renderer.h"
 
 #include <algorithm>
@@ -465,6 +466,10 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
             float nearest = 1e30f;
             for (std::uint32_t i = 0; i < p.count; ++i)
                 nearest = std::min(nearest, frame.vertices[p.first + i].z);
+            // A piece clip_far_polygons cut sorts as the strip it came from (dreamcomp): the far
+            // vertex it lost is what made the strip sort where it does.
+            if (blended && !std::isnan(p.sort_strip))
+                nearest = p.sort_strip;
             items.push_back({&p, nearest, blended, alpha_test});
         }
     };
