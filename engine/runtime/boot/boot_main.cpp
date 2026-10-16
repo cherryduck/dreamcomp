@@ -951,14 +951,17 @@ struct Live {
     }
 
     void screenshot() {
-        char name[64];
-        std::snprintf(name, sizeof name, "screenshot-%03u.ppm", screenshots++);
+        char base[64];
+        std::snprintf(base, sizeof base, "screenshot-%03u.ppm", screenshots++);
+        // --screenshot-dir (dreamcomp): where they go; the working directory without one.
+        const std::string name = screenshot_dir.empty() ? base : screenshot_dir + "/" + base;
         screenshot_to(name);
         // DREAM_SHOT_INTERP=1 (dreamcomp): also the interpolated frame drawn before this one.
         if (interpolate && interp_rendered && std::getenv("DREAM_SHOT_INTERP")) {
             if (const std::uint32_t* src = interp_off.pixels()) {
-                std::snprintf(name, sizeof name, "screenshot-%03u-interp.ppm", screenshots - 1);
-                if (FILE* f = std::fopen(name, "wb")) {
+                std::snprintf(base, sizeof base, "screenshot-%03u-interp.ppm", screenshots - 1);
+                const std::string iname = screenshot_dir.empty() ? base : screenshot_dir + "/" + base;
+                if (FILE* f = std::fopen(iname.c_str(), "wb")) {
                     std::fprintf(f, "P6\n%u %u\n255\n", interp_off.width(), interp_off.height());
                     const std::size_t n =
                         static_cast<std::size_t>(interp_off.width()) * interp_off.height();
@@ -972,7 +975,7 @@ struct Live {
                 }
             }
         }
-        std::printf("wrote %s: presented frame %llu, guest frame %llu\n", name,
+        std::printf("wrote %s: presented frame %llu, guest frame %llu\n", name.c_str(),
                     static_cast<unsigned long long>(presented),
                     static_cast<unsigned long long>(guest_frame));
     }
@@ -1136,6 +1139,7 @@ struct Live {
     // frame, for a run with nobody at the keyboard. These were environment variables, which is
     // fine for a one-off and wrong for something the documentation tells people to use.
     std::set<std::uint64_t> screenshot_at;  // --screenshot-at N[,N...] (list: dreamcomp)
+    std::string screenshot_dir;             // --screenshot-dir DIR (dreamcomp); empty = cwd
     std::uint64_t capture_at = 0;
     std::chrono::steady_clock::time_point fps_mark{};
     std::uint64_t fps_frames_at_mark = 0;
@@ -1614,6 +1618,7 @@ void usage(const char* argv0, std::FILE* out) {
         "  --dump-aram FILE       the 2 MB of sound RAM at the stop\n"
         "  --dump FILE            a memory range at the stop\n"
         "  --screenshot-at N[,N]  write a screenshot at each listed presented frame (F12)\n"
+        "  --screenshot-dir DIR   where screenshots go (default: the working directory)\n"
         "  --capture-at N         write a full frame capture at the Nth (F11 by hand)\n"
         "  --wav FILE             record the audio as 16-bit stereo 44.1 kHz\n"
         "  --sample N             sample the CPU every N cycles (--sample-file FILE)\n"
@@ -1762,6 +1767,7 @@ int main(int argc, char** argv) {
     // --suggest-config FILE: the TOML this run earned, ready to paste into the game's config.
     std::string suggest_config;
     std::set<std::uint64_t> screenshot_at;  // --screenshot-at N[,N...] (list: dreamcomp)
+    std::string screenshot_dir;             // --screenshot-dir DIR (dreamcomp)
     std::uint64_t capture_at = 0;
     unsigned scale = 1;
     // --texture-pack DIR / --dump-textures DIR (dreamcomp): replacement packs and the dump that
@@ -1889,6 +1895,8 @@ int main(int argc, char** argv) {
             start_with_fps = true;
         else if (!std::strcmp(argv[i], "--suggest-config") && i + 1 < argc)
             suggest_config = argv[++i];
+        else if (!std::strcmp(argv[i], "--screenshot-dir") && i + 1 < argc)
+            screenshot_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--screenshot-at") && i + 1 < argc)
             for (const char* p = argv[++i]; *p;) {
                 char* end = nullptr;
@@ -2330,6 +2338,7 @@ int main(int argc, char** argv) {
         live->window.set_present_mode(present_mode);
         live->window.set_present_path(present_path);
         live->screenshot_at = screenshot_at;
+        live->screenshot_dir = screenshot_dir;
         live->capture_at = capture_at;
         // The window names the title being run. The config is the only place that name is written
         // down for a human, and a config without one still gets a window with a name on it.
