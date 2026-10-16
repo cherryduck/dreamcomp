@@ -87,8 +87,16 @@ public:
 private:
     bool draw_set(VkCommandBuffer cmd, VkDescriptorSet set, std::uint32_t width,
                   std::uint32_t height, VkExtent2D target);
-    VkDescriptorSet ext_set_ = VK_NULL_HANDLE;
-    VkImageView ext_view_ = VK_NULL_HANDLE;
+    // draw_view's sets, one per draw in a ring (dreamcomp). A set may not be rewritten while a
+    // command buffer that uses it is in flight: with one set, the in-between frame and the real
+    // frame each rewrote it before the other had executed, and drivers that read descriptors at
+    // execution (RADV) then showed the image the next frame was still being drawn into. The ring
+    // is longer than the draws that can be in flight (two frames in flight, at most one
+    // draw_view each).
+    static constexpr unsigned kExtSets = 8;
+    VkDescriptorSet ext_sets_[kExtSets] = {};
+    VkImageView ext_views_[kExtSets] = {};
+    unsigned ext_next_ = 0;
     bool ensure_image(std::uint32_t width, std::uint32_t height);
     void destroy_image();
 

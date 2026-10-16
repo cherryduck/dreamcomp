@@ -350,6 +350,7 @@ struct Live {
         renderer.set_render_pass(offscreen.render_pass());
         if (interpolate) {
             interp_off.destroy();
+            interp_off.readback = false;
             interp_off.create(window.context(), w, h);
             interp_ready = false;
             have_prev = false;
@@ -388,6 +389,12 @@ struct Live {
                         interpolate ? "on" : "off (60 Hz or unknown)");
         }
         // Geometry interpolation (dreamcomp): a second target for the frame between two renders.
+        // The in-between frame is only ever sampled by the presenter (dreamcomp): with the default
+        // readback on, its render pass left it a transfer source that the presenter then sampled
+        // as shader-read-only (validation VUID-vkCmdDraw-None-09600), which a driver that keeps
+        // images compressed (RADV) reads as garbage, and it was copied to the host for nothing.
+        // DREAM_SHOT_INTERP's pixels() copies on demand.
+        interp_off.readback = false;
         if (interpolate && !interp_off.create(window.context(), w, h)) {
             error = interp_off.error();
             return false;
