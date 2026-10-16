@@ -1,5 +1,5 @@
 // ta_dump: print every polygon of a captured TA display list (an F11 / --capture-at .ta file).
-//   ta_dump capture-000.ta [--list N] [--region x0,y0,x1,y1] [--verts]
+//   ta_dump capture-000.ta [--list N] [--region x0,y0,x1,y1] [--verts] [--modifiers]
 // One line per strip: list, index, vertex count, sprite?, PCW/ISP/TSP/TCW, screen bounds, z range;
 // --verts adds one line per vertex (x, y, z = 1/w, u, v, base and offset colour).
 // Used to find what distinguishes 2D HUD draws from 3D geometry (docs/HUD.md).
@@ -15,11 +15,11 @@
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: ta_dump FILE.ta [--list N] [--region x0,y0,x1,y1] [--verts]\n");
+        std::fprintf(stderr, "usage: ta_dump FILE.ta [--list N] [--region x0,y0,x1,y1] [--verts] [--modifiers]\n");
         return 2;
     }
     int only_list = -1;
-    bool verts = false;
+    bool verts = false, mods = false;
     float rx0 = -1e9f, ry0 = -1e9f, rx1 = 1e9f, ry1 = 1e9f;
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--list") && i + 1 < argc)
@@ -28,6 +28,8 @@ int main(int argc, char** argv) {
             std::sscanf(argv[++i], "%f,%f,%f,%f", &rx0, &ry0, &rx1, &ry1);
         else if (!std::strcmp(argv[i], "--verts"))
             verts = true;
+        else if (!std::strcmp(argv[i], "--modifiers"))
+            mods = true;
     }
     std::ifstream in(argv[1], std::ios::binary);
     std::vector<char> raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -64,6 +66,14 @@ int main(int argc, char** argv) {
                             k, v.x, v.y, v.z, v.u, v.v, v.base, v.offset);
             }
         }
+    }
+    // --modifiers: one line per modifier-volume triangle (header, ISP, last-of-volume, list).
+    for (std::size_t i = 0; mods && i < f.modifiers.size(); ++i) {
+        const auto& t = f.modifiers[i];
+        std::printf("M #%-4zu hdr %-4u isp=%08x %s%s (%.6g, %.6g, %.6g) (%.6g, %.6g, %.6g) "
+                    "(%.6g, %.6g, %.6g)\n",
+                    i, t.header, t.isp, t.volume_last ? "last " : "", t.translucent ? "TR " : "",
+                    t.x[0], t.y[0], t.z[0], t.x[1], t.y[1], t.z[1], t.x[2], t.y[2], t.z[2]);
     }
     return 0;
 }
