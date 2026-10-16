@@ -604,3 +604,46 @@ TEST_CASE("display list: clipped pieces keep their parent's translucent sort key
         CHECK(q.sort_strip == doctest::Approx(0.01f));
     }
 }
+
+TEST_CASE("display list: far modifier-volume triangles are clipped in place, keeping their header") {
+    using namespace dream::render;
+    Frame f;
+    ModifierTriangle near{};
+    near.x[0] = 10; near.y[0] = 10; near.z[0] = 0.5f;
+    near.x[1] = 50; near.y[1] = 10; near.z[1] = 0.5f;
+    near.x[2] = 10; near.y[2] = 50; near.z[2] = 0.5f;
+    near.header = 1;
+    ModifierTriangle far{};  // as Ecco's shadow volumes: one corner behind the camera
+    far.x[0] = -82343.2f; far.y[0] = 1.06167e7f; far.z[0] = 1000.0f;
+    far.x[1] = 318.412f; far.y[1] = 290.288f; far.z[1] = 0.181672f;
+    far.x[2] = -96062.0f; far.y[2] = 1.05204e7f; far.z[2] = 1000.0f;
+    far.header = 2;
+    far.isp = 0x20000000u;
+    far.volume_last = true;
+    ModifierTriangle after = near;
+    after.header = 3;
+    f.modifiers = {near, far, after};
+    CHECK(clip_far_polygons(f, 2048.0f) == 1);
+    REQUIRE(f.modifiers.size() >= 3);
+    CHECK(f.modifiers.front().header == 1);
+    CHECK(f.modifiers.back().header == 3);
+    // The plane 1/w = a x + b y + c through the original corners holds at every new corner.
+    auto plane = [&](double x, double y) {
+        const double ax = far.x[0], ay = far.y[0], bx = far.x[1], by = far.y[1], cx = far.x[2], cy = far.y[2];
+        const double d = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+        const double w1 = ((x - ax) * (cy - ay) - (y - ay) * (cx - ax)) / d;
+        const double w2 = ((bx - ax) * (y - ay) - (by - ay) * (x - ax)) / d;
+        return (1 - w1 - w2) * far.z[0] + w1 * far.z[1] + w2 * far.z[2];
+    };
+    for (std::size_t i = 1; i + 1 < f.modifiers.size(); ++i) {
+        const auto& t = f.modifiers[i];
+        CHECK(t.header == 2);
+        CHECK(t.isp == far.isp);
+        CHECK(t.volume_last);
+        for (int k = 0; k < 3; ++k) {
+            CHECK(std::abs(t.x[k] - 320.0f) <= 2048.5f);
+            CHECK(std::abs(t.y[k] - 240.0f) <= 2048.5f);
+            CHECK(std::abs(plane(t.x[k], t.y[k]) - t.z[k]) < 1e-3 * std::max(1.0, std::abs(plane(t.x[k], t.y[k]))));
+        }
+    }
+}

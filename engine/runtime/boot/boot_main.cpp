@@ -1627,6 +1627,8 @@ void usage(const char* argv0, std::FILE* out) {
         "\n"
         "Reproducing a run:\n"
         "  --rtc-seed N           fix the console clock so two runs do the same thing\n"
+        "  --record-input FILE    write player 1's controller, every vblank, to FILE\n"
+        "  --play-input FILE      replay a recording (then the controller is live again)\n"
         "  --press B@F[,B@F...]   hold a button for 8 frames from frame F (a b c x y z start\n"
         "                         up down left right), to get past screens that wait for input\n"
         "\n"
@@ -1784,6 +1786,11 @@ int main(int argc, char** argv) {
     // frame, so a headless run can get past "press start" screens. Names: a b c x y z start up
     // down left right.
     std::string presses;
+    // --record-input FILE / --play-input FILE (dreamcomp): player 1's controller as the game saw
+    // it at every vblank, written / replayed. With the same disc, settings, --rtc-seed and a
+    // fresh --vmu the game is deterministic, so a session played by hand can be replayed exactly
+    // (a bug seen on one machine captured on another, or with --dump-ta at the moment it shows).
+    std::string record_input, play_input;
     // --window: open a window and play. Without it the run is headless exactly as before.
     // --scale N draws the geometry at N times the guest's resolution; the frame is resampled back
     // into the guest's framebuffer, so the guest never learns its screen changed size.
@@ -1908,6 +1915,10 @@ int main(int argc, char** argv) {
             dump_ta_count = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--press") && i + 1 < argc)
             presses = argv[++i];
+        else if (!std::strcmp(argv[i], "--record-input") && i + 1 < argc)
+            record_input = argv[++i];
+        else if (!std::strcmp(argv[i], "--play-input") && i + 1 < argc)
+            play_input = argv[++i];
         else if (!std::strcmp(argv[i], "--max-seconds") && i + 1 < argc)
             max_seconds = std::strtoull(argv[++i], nullptr, 0);
         else if (!std::strcmp(argv[i], "--window"))
@@ -2324,8 +2335,59 @@ int main(int argc, char** argv) {
                     scripted.push_back({frame, n.bit});
         }
     }
+    // Input recording (see --record-input): "DREAMINPUT1\n", then per vblank the guest frame
+    // (u64) and the controller state (8 bytes), little-endian as the host is.
+    struct InputRecord {
+        std::uint64_t frame;
+        dream::maple::ControllerState state;
+    };
+    static_assert(sizeof(dream::maple::ControllerState) == 8);
+    std::FILE* rec_file = nullptr;
+    std::vector<InputRecord> playback;
+    std::size_t playback_at = 0;
+    bool playing = false;
+    if (!record_input.empty()) {
+        rec_file = std::fopen(record_input.c_str(), "wb");
+        if (!rec_file) {
+            std::fprintf(stderr, "cannot write the input recording %s\n", record_input.c_str());
+            return 2;
+        }
+        std::fputs("DREAMINPUT1\n", rec_file);
+        std::printf("recording player 1's input to %s\n", record_input.c_str());
+    }
+    if (!play_input.empty()) {
+        std::FILE* f = std::fopen(play_input.c_str(), "rb");
+        char magic[12] = {};
+        if (!f || std::fread(magic, 1, 12, f) != 12 || std::memcmp(magic, "DREAMINPUT1\n", 12)) {
+            std::fprintf(stderr, "%s is not an input recording\n", play_input.c_str());
+            if (f) std::fclose(f);
+            return 2;
+        }
+        for (InputRecord r; std::fread(&r.frame, 8, 1, f) == 1 && std::fread(&r.state, 8, 1, f) == 1;)
+            playback.push_back(r);
+        std::fclose(f);
+        playing = !playback.empty();
+        std::printf("playing %zu frames of input from %s (guest frames %llu..%llu)\n",
+                    playback.size(), play_input.c_str(),
+                    playing ? static_cast<unsigned long long>(playback.front().frame) : 0ull,
+                    playing ? static_cast<unsigned long long>(playback.back().frame) : 0ull);
+    }
     sys.spg.on_vblank_out = [&] {
         for (auto* e : dream::host::extensions()) e->on_vblank(sys);
+        if (playing) {
+            const std::uint64_t f = sys.spg.frames();
+            while (playback_at < playback.size() && playback[playback_at].frame < f)
+                ++playback_at;
+            if (playback_at < playback.size()) {
+                if (playback[playback_at].frame == f)
+                    pad_ptr->state = playback[playback_at].state;
+            } else {
+                playing = false;
+                pad_ptr->state = {};
+                std::printf("input playback ended at guest frame %llu: the controller is live\n",
+                            static_cast<unsigned long long>(f));
+            }
+        }
         if (!scripted.empty()) {
             const std::uint64_t f = sys.spg.frames();
             std::uint16_t held = 0;
@@ -2333,6 +2395,14 @@ int main(int argc, char** argv) {
                 if (f >= start && f < start + 8)
                     held |= bit;
             pad_ptr->state.buttons = static_cast<std::uint16_t>(0xFFFFu & ~held);
+        }
+        if (rec_file) {
+            const std::uint64_t f = sys.spg.frames();
+            std::fwrite(&f, 8, 1, rec_file);
+            std::fwrite(&pad_ptr->state, 8, 1, rec_file);
+            // Flushed every second: a console title is ended by closing it.
+            if (f % 60 == 0)
+                std::fflush(rec_file);
         }
         maple.vblank();
     };
@@ -2548,7 +2618,7 @@ int main(int argc, char** argv) {
                     throw StopRun{"the window was closed"};
                 // Scripted presses win while they are held, so --press still works with a window
                 // open.
-                if (scripted.empty() || pad_ptr->state.buttons == 0xFFFFu)
+                if (!playing && (scripted.empty() || pad_ptr->state.buttons == 0xFFFFu))
                     live->read_controls(pad_ptr->state, 0);
                 sync_ports(live->window.players());
                 for (unsigned port = 1; port < port_pads.size(); ++port)

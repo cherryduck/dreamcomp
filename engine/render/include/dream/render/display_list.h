@@ -112,6 +112,7 @@ bool polygon_tiles(const Frame& frame, const Polygon& polygon);
 // the rock in stripes. Everything the shaders interpolate is linear in screen space here (1/w,
 // and colour and texture coordinates multiplied by it), so the cut is exact: an affected strip
 // becomes separate triangles (same words, same facing), each clipped, each fanned back out.
+// Modifier-volume triangles are clipped the same way (their pieces in their place).
 std::size_t clip_far_polygons(Frame& frame, float limit = 2048.0f);
 
 // Feed it the same 32-byte chunks the Tile Accelerator FIFO receives.
