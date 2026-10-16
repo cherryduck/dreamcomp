@@ -98,6 +98,29 @@ bool blend_frames(const Frame& older, const Frame& newer, const BlendOptions& op
         return false;
     }
     const float t = opt.t;
+    // Texture coordinates identify a strip only when no other strip of its list carries the same
+    // ones (dreamcomp). World geometry's are unique; repeated sprites (Ecco's intro: dozens of
+    // identical bubbles) share theirs, and trusting them paired a bubble with another one across
+    // the screen, so every in-between frame showed the swarm rearranged: flicker at 120 Hz. Only
+    // unique strips get the long jump and the re-pairing below.
+    std::vector<std::unordered_map<std::uint64_t, std::uint32_t>> key_count(out.lists.size());
+    if (opt.match_uv)
+        for (std::size_t l = 0; l < out.lists.size(); ++l) {
+            for (const auto& p : newer.lists[l])
+                if ((p.pcw >> 3) & 1u) ++key_count[l][uv_key(newer, p)];
+            if (l < older.lists.size())
+                for (const auto& p : older.lists[l])
+                    if ((p.pcw >> 3) & 1u) key_count[l][uv_key(older, p)] += 0x10000u;
+        }
+    // Exactly once in each frame.
+    auto unique_uv = [&](std::size_t l, const Polygon& p) {
+        const auto it = key_count[l].find(uv_key(newer, p));
+        return it != key_count[l].end() && it->second == 0x10001u;
+    };
+    auto duplicate_uv = [&](std::size_t l, const Polygon& p) {
+        const auto it = key_count[l].find(uv_key(newer, p));
+        return it != key_count[l].end() && ((it->second & 0xFFFFu) > 1 || (it->second >> 16) > 1);
+    };
     std::vector<std::vector<std::uint8_t>> blended(out.lists.size());
     for (std::size_t l = 0; l < out.lists.size(); ++l) blended[l].assign(out.lists[l].size(), 0);
     for (const auto& p : pairs) {
@@ -117,7 +140,10 @@ bool blend_frames(const Frame& older, const Frame& newer, const BlendOptions& op
                 continue;
             }
         }
-        const float jump = uv_checked ? opt.max_jump_uv : opt.max_jump;
+        // A sprite with twins is paired by position below, not by list order.
+        if (uv_checked && duplicate_uv(p.list, pb))
+            continue;
+        const float jump = uv_checked && unique_uv(p.list, pb) ? opt.max_jump_uv : opt.max_jump;
         for (std::uint32_t k = 0; k < pb.count && ok; ++k) {
             const Vertex& va = older.vertices[pa.first + k];
             const Vertex& vb = out.vertices[pb.first + k];
@@ -139,6 +165,89 @@ bool blend_frames(const Frame& older, const Frame& newer, const BlendOptions& op
         blended[p.list][p.b] = 1;
         ++stats.blended_strips;
     }
+    // Twins (dreamcomp): strips that share their texture coordinates with others in the list,
+    // such as the swarm of identical bubbles in Ecco's intro. List order says nothing about which
+    // is which (the game adds, drops and reorders them), so each pairs with the twin nearest to it
+    // in the older frame, and only when that one's nearest is it in return, within max_jump.
+    // A twin left unpaired is drawn where the newer frame has it.
+    if (opt.match_uv) {
+        auto centre = [](const Frame& f, const Polygon& p) {
+            float x = 0.0f, y = 0.0f;
+            for (std::uint32_t k = 0; k < p.count; ++k) {
+                x += f.vertices[p.first + k].x;
+                y += f.vertices[p.first + k].y;
+            }
+            return std::pair<float, float>{x / p.count, y / p.count};
+        };
+        for (std::size_t l = 0; l < out.lists.size() && l < older.lists.size(); ++l) {
+            const auto& A = older.lists[l];
+            const auto& B = out.lists[l];
+            std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> twins_a, twins_b;
+            for (std::uint32_t j = 0; j < B.size(); ++j)
+                if (((B[j].pcw >> 3) & 1u) && duplicate_uv(l, B[j]))
+                    twins_b[uv_key(newer, B[j])].push_back(j);
+            if (twins_b.empty())
+                continue;
+            for (std::uint32_t i = 0; i < A.size(); ++i)
+                if ((A[i].pcw >> 3) & 1u) {
+                    const auto key = uv_key(older, A[i]);
+                    if (twins_b.count(key))
+                        twins_a[key].push_back(i);
+                }
+            for (const auto& [key, bs] : twins_b) {
+                const auto found = twins_a.find(key);
+                if (found == twins_a.end())
+                    continue;
+                const auto& as = found->second;
+                std::vector<std::pair<float, float>> ca, cb;
+                for (auto i : as) ca.push_back(centre(older, A[i]));
+                for (auto j : bs) cb.push_back(centre(newer, B[j]));
+                auto d2 = [&](std::size_t x, std::size_t y) {
+                    const float dx = ca[x].first - cb[y].first, dy = ca[x].second - cb[y].second;
+                    return dx * dx + dy * dy;
+                };
+                auto nearest_a = [&](std::size_t y) {
+                    std::size_t best = 0;
+                    for (std::size_t x = 1; x < ca.size(); ++x)
+                        if (d2(x, y) < d2(best, y)) best = x;
+                    return best;
+                };
+                auto nearest_b = [&](std::size_t x) {
+                    std::size_t best = 0;
+                    for (std::size_t y = 1; y < cb.size(); ++y)
+                        if (d2(x, y) < d2(x, best)) best = y;
+                    return best;
+                };
+                for (std::size_t y = 0; y < cb.size(); ++y) {
+                    const std::size_t x = nearest_a(y);
+                    if (nearest_b(x) != y || d2(x, y) > opt.max_jump * opt.max_jump)
+                        continue;
+                    const Polygon& pa = A[as[x]];
+                    const Polygon& pb = B[bs[y]];
+                    if (!same(pa, pb))
+                        continue;
+                    bool ok = true;
+                    for (std::uint32_t k = 0; k < pb.count && ok; ++k) {
+                        const Vertex& va = older.vertices[pa.first + k];
+                        const Vertex& vb = out.vertices[pb.first + k];
+                        ok = std::isfinite(va.x) && std::isfinite(va.y) && std::isfinite(va.z) &&
+                             std::isfinite(vb.x) && std::isfinite(vb.y) && std::isfinite(vb.z);
+                    }
+                    if (!ok)
+                        continue;
+                    for (std::uint32_t k = 0; k < pb.count; ++k) {
+                        const Vertex& va = older.vertices[pa.first + k];
+                        Vertex& vb = out.vertices[pb.first + k];
+                        vb.x = va.x + (vb.x - va.x) * t;
+                        vb.y = va.y + (vb.y - va.y) * t;
+                        vb.z = va.z + (vb.z - va.z) * t;
+                    }
+                    blended[l][bs[y]] = 1;
+                    ++stats.blended_strips;
+                }
+            }
+        }
+    }
     // Second chance for textured strips the in-order pairing missed or got wrong: games that cull
     // the world per strip reorder it as the camera turns. Look the strip up in the older frame by
     // its texture coordinates instead of its position in the list (dreamcomp).
@@ -155,7 +264,7 @@ bool blend_frames(const Frame& older, const Frame& newer, const BlendOptions& op
                 if (blended[l][j])
                     continue;
                 const Polygon& pb = newer.lists[l][j];
-                if (!((pb.pcw >> 3) & 1u))
+                if (!((pb.pcw >> 3) & 1u) || !unique_uv(l, pb))
                     continue;
                 auto [lo, hi] = by_key.equal_range(uv_key(newer, pb));
                 for (auto it = lo; it != hi; ++it) {
