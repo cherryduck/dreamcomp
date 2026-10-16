@@ -55,6 +55,14 @@ struct UiConfig {
     std::filesystem::path config;   // the game's TOML
     std::filesystem::path exe_dir;  // frontend/ lives here
     std::string version;            // "dreamcomp 0.1.0 · Soulcalibur 0.1.0"
+    // What the platform offers (dreamcomp). A console title (the PS5's) has no window to switch,
+    // no program to open a folder or a page with, and nothing to quit to from inside the game:
+    // the rows and buttons for them are left out.
+    bool can_window = true;        // Graphics: Window mode
+    bool can_open_external = true; // Open texture / mods folder, Read me
+    bool can_quit = true;          // Quit Game
+    bool keyboard = true;          // false: no keyboard; hints and Controls are the pad's only
+    bool playstation = false;      // PlayStation button glyphs whatever pad SDL reports
 };
 
 class MenuUi final : public Rml::EventListener {
@@ -194,6 +202,14 @@ private:
     bool bindings_loaded_ = false;
     int ctl_view_ = 0;    // 0 player cards, 1 mappings
     int ctl_device_ = 1;  // 0 keyboard, 1 controller
+    bool ps_pad_ = false;  // the first pad is a PlayStation one (dreamcomp)
+    // Pad hints: with a pad connected, or always where there is no keyboard (a console).
+    bool has_pad() const { return !pads_.empty() || !cfg_.keyboard; }
+    bool ps_glyphs() const { return cfg_.playstation || ps_pad_; }
+    const char* glyph_a() const;
+    const char* glyph_b() const;
+    const char* glyph_lb() const;
+    const char* glyph_rb() const;
     struct Capture {
         bool active = false;
         unsigned control = 0, slot = 0;

@@ -62,6 +62,14 @@ struct OverlayContext {
     const PortInfo* port = nullptr;
     std::filesystem::path config, exe_dir;
     std::string version;
+    // What the platform offers (dreamcomp). A console title (the PS5's) has no window to switch,
+    // no program to open a folder or a page with, and nothing to quit to from inside the game:
+    // the rows and buttons for them are left out.
+    bool can_window = true;        // Graphics: Window mode
+    bool can_open_external = true; // Open texture / mods folder, Read me
+    bool can_quit = true;          // Quit Game
+    bool keyboard = true;          // false: no keyboard; hints and Controls are the pad's only
+    bool playstation = false;      // PlayStation button glyphs whatever pad SDL reports
     std::function<void()> applied;  // after Apply: re-read the settings that apply live
     // The F1 HUD editor (docs/HUD.md). hud_watch starts/stops the per-frame snapshots,
     // hud_snapshot copies the newest (false: none yet); hud_edit and hud_save must be called on
