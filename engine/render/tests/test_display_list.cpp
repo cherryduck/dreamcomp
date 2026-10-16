@@ -528,3 +528,122 @@ TEST_CASE("polygon_tiles tells a mapped texture from a repeated one") {
     truncated.count = 400;
     CHECK(polygon_tiles(frame, truncated) == false);
 }
+
+TEST_CASE("display list: far off-screen polygons are clipped exactly, near ones left alone") {
+    using namespace dream::render;
+    Frame f;
+    // A quad strip with two vertices tens of millions of pixels away (Ecco's water surface).
+    const Vertex vs[4] = {{-17284136.0f, -12424606.0f, 1000.0f, 0.0f, 0.0f, 0xFF0000FFu, 0},
+                          {223.97f, 166.73f, 0.0059f, 1.0f, 0.0f, 0xFF00FF00u, 0},
+                          {-56512820.0f, -12424606.0f, 1000.0f, 0.0f, 1.0f, 0xFFFF0000u, 0},
+                          {-505.75f, 168.66f, 0.0057f, 1.0f, 1.0f, 0xFFFFFFFFu, 0}};
+    for (const auto& v : vs) f.vertices.push_back(v);
+    Polygon far{};
+    far.first = 0;
+    far.count = 4;
+    far.pcw = 0x828c088e;
+    f.lists[2].push_back(far);
+    // An ordinary on-screen triangle in the same list stays exactly as it was.
+    for (const auto& v : {Vertex{10, 10, 0.5f}, Vertex{100, 10, 0.5f}, Vertex{10, 100, 0.5f}})
+        f.vertices.push_back(v);
+    Polygon near{};
+    near.first = 4;
+    near.count = 3;
+    f.lists[2].push_back(near);
+    const Frame before = f;
+
+    CHECK(clip_far_polygons(f, 2048.0f) == 1);
+    REQUIRE(f.lists[2].size() >= 2);
+    CHECK(f.lists[2].back().first == 4);  // order kept: the near triangle is still last
+    // Every vertex now lies within the rectangle, and at any clipped vertex 1/w is the value the
+    // original plane has there (linear in screen space).
+    auto plane_z = [&](const Vertex& a, const Vertex& b, const Vertex& c, double x, double y) {
+        const double d = (double(b.x) - a.x) * (double(c.y) - a.y) - (double(b.y) - a.y) * (double(c.x) - a.x);
+        const double w1 = ((x - a.x) * (double(c.y) - a.y) - (y - a.y) * (double(c.x) - a.x)) / d;
+        const double w2 = ((double(b.x) - a.x) * (y - a.y) - (double(b.y) - a.y) * (x - a.x)) / d;
+        return (1 - w1 - w2) * a.z + w1 * b.z + w2 * c.z;
+    };
+    for (std::size_t i = 0; i + 1 < f.lists[2].size(); ++i) {
+        const Polygon& p = f.lists[2][i];
+        CHECK(p.count == 3);
+        CHECK(p.pcw == far.pcw);
+        for (std::uint32_t k = 0; k < 3; ++k) {
+            const Vertex& v = f.vertices[p.first + k];
+            CHECK(v.x >= 320.0f - 2048.5f);
+            CHECK(v.x <= 320.0f + 2048.5f);
+            CHECK(v.y >= 240.0f - 2048.5f);
+            CHECK(v.y <= 240.0f + 2048.5f);
+            // Both source triangles share the plane only if the quad is flat: check against the
+            // one that contains the point (the first triangle of the strip covers x < 224).
+            const double z0 = plane_z(vs[0], vs[1], vs[2], v.x, v.y);
+            const double z1 = plane_z(vs[1], vs[2], vs[3], v.x, v.y);
+            CHECK((std::abs(z0 - v.z) < 1e-4 * std::max(1.0, std::abs(z0)) ||
+                   std::abs(z1 - v.z) < 1e-4 * std::max(1.0, std::abs(z1))));
+        }
+    }
+    // A frame with nothing far away is untouched.
+    Frame g = before;
+    g.lists[2].erase(g.lists[2].begin());
+    const auto n = g.vertices.size();
+    CHECK(clip_far_polygons(g, 2048.0f) == 0);
+    CHECK(g.vertices.size() == n);
+}
+
+TEST_CASE("display list: clipped pieces keep their parent's translucent sort keys") {
+    using namespace dream::render;
+    Frame f;
+    for (const auto& v : {Vertex{-1e7f, 0, 1000.0f}, Vertex{300, 200, 0.01f}, Vertex{-1e7f, 400, 1000.0f}})
+        f.vertices.push_back(v);
+    Polygon p{};
+    p.count = 3;
+    f.lists[2].push_back(p);
+    REQUIRE(clip_far_polygons(f, 2048.0f) == 1);
+    REQUIRE(!f.lists[2].empty());
+    for (const auto& q : f.lists[2]) {
+        CHECK(q.sort_triangle == doctest::Approx((1000.0f + 0.01f + 1000.0f) / 3.0f));
+        CHECK(q.sort_strip == doctest::Approx(0.01f));
+    }
+}
+
+TEST_CASE("display list: far modifier-volume triangles are clipped in place, keeping their header") {
+    using namespace dream::render;
+    Frame f;
+    ModifierTriangle near{};
+    near.x[0] = 10; near.y[0] = 10; near.z[0] = 0.5f;
+    near.x[1] = 50; near.y[1] = 10; near.z[1] = 0.5f;
+    near.x[2] = 10; near.y[2] = 50; near.z[2] = 0.5f;
+    near.header = 1;
+    ModifierTriangle far{};  // as Ecco's shadow volumes: one corner behind the camera
+    far.x[0] = -82343.2f; far.y[0] = 1.06167e7f; far.z[0] = 1000.0f;
+    far.x[1] = 318.412f; far.y[1] = 290.288f; far.z[1] = 0.181672f;
+    far.x[2] = -96062.0f; far.y[2] = 1.05204e7f; far.z[2] = 1000.0f;
+    far.header = 2;
+    far.isp = 0x20000000u;
+    far.volume_last = true;
+    ModifierTriangle after = near;
+    after.header = 3;
+    f.modifiers = {near, far, after};
+    CHECK(clip_far_polygons(f, 2048.0f) == 1);
+    REQUIRE(f.modifiers.size() >= 3);
+    CHECK(f.modifiers.front().header == 1);
+    CHECK(f.modifiers.back().header == 3);
+    // The plane 1/w = a x + b y + c through the original corners holds at every new corner.
+    auto plane = [&](double x, double y) {
+        const double ax = far.x[0], ay = far.y[0], bx = far.x[1], by = far.y[1], cx = far.x[2], cy = far.y[2];
+        const double d = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+        const double w1 = ((x - ax) * (cy - ay) - (y - ay) * (cx - ax)) / d;
+        const double w2 = ((bx - ax) * (y - ay) - (by - ay) * (x - ax)) / d;
+        return (1 - w1 - w2) * far.z[0] + w1 * far.z[1] + w2 * far.z[2];
+    };
+    for (std::size_t i = 1; i + 1 < f.modifiers.size(); ++i) {
+        const auto& t = f.modifiers[i];
+        CHECK(t.header == 2);
+        CHECK(t.isp == far.isp);
+        CHECK(t.volume_last);
+        for (int k = 0; k < 3; ++k) {
+            CHECK(std::abs(t.x[k] - 320.0f) <= 2048.5f);
+            CHECK(std::abs(t.y[k] - 240.0f) <= 2048.5f);
+            CHECK(std::abs(plane(t.x[k], t.y[k]) - t.z[k]) < 1e-3 * std::max(1.0, std::abs(plane(t.x[k], t.y[k]))));
+        }
+    }
+}

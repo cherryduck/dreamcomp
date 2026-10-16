@@ -1,4 +1,6 @@
 // See display_list.h.
+#include <vector>
+#include <cmath>
 #include "dream/render/display_list.h"
 
 #include <algorithm>
@@ -501,6 +503,183 @@ bool polygon_tiles(const Frame& frame, const Polygon& polygon) {
             return true;
     }
     return false;
+}
+
+
+namespace {
+
+// A vertex in the form the shaders interpolate: everything multiplied by 1/w (z) but z itself.
+struct ClipVertex {
+    double x, y, z, uz, vz;
+    double base[4], offset[4];
+};
+
+ClipVertex to_clip(const Vertex& v) {
+    ClipVertex c{v.x, v.y, v.z, v.u * double(v.z), v.v * double(v.z), {}, {}};
+    for (int k = 0; k < 4; ++k) {
+        c.base[k] = double((v.base >> (8 * k)) & 0xFFu) * v.z;
+        c.offset[k] = double((v.offset >> (8 * k)) & 0xFFu) * v.z;
+    }
+    return c;
+}
+
+Vertex from_clip(const ClipVertex& c) {
+    Vertex v;
+    v.x = static_cast<float>(c.x);
+    v.y = static_cast<float>(c.y);
+    v.z = static_cast<float>(c.z);
+    const double iz = c.z != 0.0 ? 1.0 / c.z : 0.0;
+    v.u = static_cast<float>(c.uz * iz);
+    v.v = static_cast<float>(c.vz * iz);
+    for (int k = 0; k < 4; ++k) {
+        const auto ch = [&](double q) {
+            return static_cast<std::uint32_t>(std::clamp(std::lround(q * iz), 0l, 255l));
+        };
+        v.base |= ch(c.base[k]) << (8 * k);
+        v.offset |= ch(c.offset[k]) << (8 * k);
+    }
+    return v;
+}
+
+ClipVertex lerp(const ClipVertex& a, const ClipVertex& b, double t) {
+    ClipVertex r;
+    r.x = a.x + (b.x - a.x) * t;
+    r.y = a.y + (b.y - a.y) * t;
+    r.z = a.z + (b.z - a.z) * t;
+    r.uz = a.uz + (b.uz - a.uz) * t;
+    r.vz = a.vz + (b.vz - a.vz) * t;
+    for (int k = 0; k < 4; ++k) {
+        r.base[k] = a.base[k] + (b.base[k] - a.base[k]) * t;
+        r.offset[k] = a.offset[k] + (b.offset[k] - a.offset[k]) * t;
+    }
+    return r;
+}
+
+// Sutherland-Hodgman against one edge: keep where side(v) >= 0, side linear in x and y.
+template <class Side>
+void clip_edge(std::vector<ClipVertex>& poly, Side side) {
+    std::vector<ClipVertex> out;
+    out.reserve(poly.size() + 2);
+    for (std::size_t i = 0; i < poly.size(); ++i) {
+        const ClipVertex& a = poly[i];
+        const ClipVertex& b = poly[(i + 1) % poly.size()];
+        const double sa = side(a), sb = side(b);
+        if (sa >= 0.0)
+            out.push_back(a);
+        if ((sa >= 0.0) != (sb >= 0.0))
+            out.push_back(lerp(a, b, sa / (sa - sb)));
+    }
+    poly.swap(out);
+}
+
+}  // namespace
+
+std::size_t clip_far_polygons(Frame& frame, float limit) {
+    constexpr double cx = 320.0, cy = 240.0;
+    const double x0 = cx - limit, x1 = cx + limit, y0 = cy - limit, y1 = cy + limit;
+    auto far = [&](const Vertex& v) {
+        return std::isfinite(v.x) && std::isfinite(v.y) &&
+               (v.x < x0 || v.x > x1 || v.y < y0 || v.y > y1);
+    };
+    std::size_t clipped = 0;
+    for (auto& list : frame.lists) {
+        bool any = false;
+        for (const auto& p : list)
+            for (std::uint32_t k = 0; k < p.count && !any; ++k)
+                any = far(frame.vertices[p.first + k]);
+        if (!any)
+            continue;
+        std::vector<Polygon> out;
+        out.reserve(list.size() + 8);
+        for (const auto& p : list) {
+            bool hit = false, finite = true;
+            for (std::uint32_t k = 0; k < p.count; ++k) {
+                const Vertex& v = frame.vertices[p.first + k];
+                hit = hit || far(v);
+                finite = finite && std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+            }
+            if (!hit || !finite || p.count < 3) {
+                out.push_back(p);
+                continue;
+            }
+            ++clipped;
+            float strip_min = 1e30f;
+            for (std::uint32_t k = 0; k < p.count; ++k)
+                strip_min = std::min(strip_min, frame.vertices[p.first + k].z);
+            for (std::uint32_t k = 0; k + 2 < p.count; ++k) {
+                // Strip triangle k, wound as the strip draws it (odd ones are reversed).
+                std::uint32_t ia = p.first + k, ib = p.first + k + 1;
+                const std::uint32_t ic = p.first + k + 2;
+                if (k & 1u)
+                    std::swap(ia, ib);
+                std::vector<ClipVertex> poly{to_clip(frame.vertices[ia]), to_clip(frame.vertices[ib]),
+                                             to_clip(frame.vertices[ic])};
+                clip_edge(poly, [&](const ClipVertex& v) { return v.x - x0; });
+                clip_edge(poly, [&](const ClipVertex& v) { return x1 - v.x; });
+                clip_edge(poly, [&](const ClipVertex& v) { return v.y - y0; });
+                clip_edge(poly, [&](const ClipVertex& v) { return y1 - v.y; });
+                const float tri_mean = (frame.vertices[ia].z + frame.vertices[ib].z +
+                                        frame.vertices[ic].z) * (1.0f / 3.0f);
+                for (std::size_t i = 1; i + 1 < poly.size(); ++i) {
+                    Polygon t = p;
+                    t.sort_triangle = std::isnan(p.sort_triangle) ? tri_mean : p.sort_triangle;
+                    t.sort_strip = std::isnan(p.sort_strip) ? strip_min : p.sort_strip;
+                    t.first = static_cast<std::uint32_t>(frame.vertices.size());
+                    t.count = 3;
+                    frame.vertices.push_back(from_clip(poly[0]));
+                    frame.vertices.push_back(from_clip(poly[i]));
+                    frame.vertices.push_back(from_clip(poly[i + 1]));
+                    out.push_back(t);
+                }
+            }
+        }
+        list.swap(out);
+    }
+    // Modifier-volume triangles too (dreamcomp): shadow volumes reach down and, with the camera
+    // tilted up, behind it (Ecco's dolphins: x = -1e8). Each is a parity flip in the stencil, so a
+    // coverage error from the clipper is a line of wrongly shaded pixels (the PS5's streaks below
+    // distant dolphins). The pieces fan a convex polygon, so each pixel is covered by one of them
+    // as it was by the triangle; outside the rectangle there is nothing to shade.
+    bool any_mod = false;
+    for (const auto& m : frame.modifiers)
+        for (int k = 0; k < 3 && !any_mod; ++k)
+            any_mod = far(Vertex{m.x[k], m.y[k], m.z[k]});
+    if (any_mod) {
+        std::vector<ModifierTriangle> out;
+        out.reserve(frame.modifiers.size() + 64);
+        for (const auto& m : frame.modifiers) {
+            bool hit = false, finite = true;
+            for (int k = 0; k < 3; ++k) {
+                hit = hit || far(Vertex{m.x[k], m.y[k], m.z[k]});
+                finite = finite && std::isfinite(m.x[k]) && std::isfinite(m.y[k]) &&
+                         std::isfinite(m.z[k]);
+            }
+            if (!hit || !finite) {
+                out.push_back(m);
+                continue;
+            }
+            ++clipped;
+            std::vector<ClipVertex> poly;
+            for (int k = 0; k < 3; ++k)
+                poly.push_back(ClipVertex{m.x[k], m.y[k], m.z[k], 0, 0, {}, {}});
+            clip_edge(poly, [&](const ClipVertex& v) { return v.x - x0; });
+            clip_edge(poly, [&](const ClipVertex& v) { return x1 - v.x; });
+            clip_edge(poly, [&](const ClipVertex& v) { return v.y - y0; });
+            clip_edge(poly, [&](const ClipVertex& v) { return y1 - v.y; });
+            for (std::size_t i = 1; i + 1 < poly.size(); ++i) {
+                ModifierTriangle t = m;
+                const ClipVertex* src[3] = {&poly[0], &poly[i], &poly[i + 1]};
+                for (int k = 0; k < 3; ++k) {
+                    t.x[k] = static_cast<float>(src[k]->x);
+                    t.y[k] = static_cast<float>(src[k]->y);
+                    t.z[k] = static_cast<float>(src[k]->z);
+                }
+                out.push_back(t);
+            }
+        }
+        frame.modifiers.swap(out);
+    }
+    return clipped;
 }
 
 }  // namespace dream::render
