@@ -320,6 +320,8 @@ struct Overlay::Impl {
         cfg.can_window = ctx.can_window;
         cfg.can_open_external = ctx.can_open_external;
         cfg.can_quit = ctx.can_quit;
+        cfg.max_scale = ctx.max_scale;
+        cfg.default_scale = ctx.default_scale;
         cfg.keyboard = ctx.keyboard;
         cfg.playstation = ctx.playstation;
         UiHost host;

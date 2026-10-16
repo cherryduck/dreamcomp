@@ -72,6 +72,17 @@ std::string version_line() {
     return v;
 }
 
+// The highest render scale (dreamcomp): the PS5's GPU memory and output go no further than 5x
+// (above it, corruption and crashes); a settings file asking for more is held to it.
+// The default is the PS5's 4K output from 5x (2400 lines); the desktop's stays 2x.
+#ifdef DREAMCOMP_CONSOLE
+constexpr int kMaxScale = 5;
+constexpr int kDefaultScale = 5;
+#else
+constexpr int kMaxScale = 8;
+constexpr int kDefaultScale = 2;
+#endif
+
 std::filesystem::path exe_dir(const std::string& argv0) {
 #ifdef _WIN32
     wchar_t buf[MAX_PATH];
@@ -358,7 +369,7 @@ public:
                 args.push_back("--window");
             if (!has_flag(args, "--scale")) {
                 args.push_back("--scale");
-                args.push_back(std::to_string(std::clamp(g_settings.get_int("scale", 2), 1, 8)));
+                args.push_back(std::to_string(std::clamp(g_settings.get_int("scale", kDefaultScale), 1, kMaxScale)));
             }
             if (!has_flag(args, "--vmu")) {
                 const std::string vmu = g_settings.get(
@@ -712,6 +723,8 @@ public:
             // desktop programs, no quitting from the menu.
             oc.can_window = oc.can_open_external = oc.can_quit = oc.keyboard = false;
             oc.playstation = true;  // the one console port there is: the PS5's
+            oc.max_scale = kMaxScale;
+            oc.default_scale = kDefaultScale;
 #endif
             oc.applied = [this] { apply_live(); };
             // The F1 HUD editor (src/frontend/hud_editor.cpp). hud_edit and hud_save are run on
@@ -785,7 +798,7 @@ public:
             hc.set_soft_clip(g_settings.get("clip", "hard") == "soft");
         // Resolution: the render target is rebuilt at the next vblank (no restart).
         if (hc.set_render_scale)
-            hc.set_render_scale(static_cast<unsigned>(std::clamp(g_settings.get_int("scale", 2), 1, 8)));
+            hc.set_render_scale(static_cast<unsigned>(std::clamp(g_settings.get_int("scale", kDefaultScale), 1, kMaxScale)));
         if (hc.set_fullscreen && hc.fullscreen &&
             hc.fullscreen() != g_settings.get_bool("fullscreen", false))
             hc.set_fullscreen(g_settings.get_bool("fullscreen", false));
