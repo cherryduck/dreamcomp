@@ -528,3 +528,79 @@ TEST_CASE("polygon_tiles tells a mapped texture from a repeated one") {
     truncated.count = 400;
     CHECK(polygon_tiles(frame, truncated) == false);
 }
+
+TEST_CASE("display list: far off-screen polygons are clipped exactly, near ones left alone") {
+    using namespace dream::render;
+    Frame f;
+    // A quad strip with two vertices tens of millions of pixels away (Ecco's water surface).
+    const Vertex vs[4] = {{-17284136.0f, -12424606.0f, 1000.0f, 0.0f, 0.0f, 0xFF0000FFu, 0},
+                          {223.97f, 166.73f, 0.0059f, 1.0f, 0.0f, 0xFF00FF00u, 0},
+                          {-56512820.0f, -12424606.0f, 1000.0f, 0.0f, 1.0f, 0xFFFF0000u, 0},
+                          {-505.75f, 168.66f, 0.0057f, 1.0f, 1.0f, 0xFFFFFFFFu, 0}};
+    for (const auto& v : vs) f.vertices.push_back(v);
+    Polygon far{};
+    far.first = 0;
+    far.count = 4;
+    far.pcw = 0x828c088e;
+    f.lists[2].push_back(far);
+    // An ordinary on-screen triangle in the same list stays exactly as it was.
+    for (const auto& v : {Vertex{10, 10, 0.5f}, Vertex{100, 10, 0.5f}, Vertex{10, 100, 0.5f}})
+        f.vertices.push_back(v);
+    Polygon near{};
+    near.first = 4;
+    near.count = 3;
+    f.lists[2].push_back(near);
+    const Frame before = f;
+
+    CHECK(clip_far_polygons(f, 2048.0f) == 1);
+    REQUIRE(f.lists[2].size() >= 2);
+    CHECK(f.lists[2].back().first == 4);  // order kept: the near triangle is still last
+    // Every vertex now lies within the rectangle, and at any clipped vertex 1/w is the value the
+    // original plane has there (linear in screen space).
+    auto plane_z = [&](const Vertex& a, const Vertex& b, const Vertex& c, double x, double y) {
+        const double d = (double(b.x) - a.x) * (double(c.y) - a.y) - (double(b.y) - a.y) * (double(c.x) - a.x);
+        const double w1 = ((x - a.x) * (double(c.y) - a.y) - (y - a.y) * (double(c.x) - a.x)) / d;
+        const double w2 = ((double(b.x) - a.x) * (y - a.y) - (double(b.y) - a.y) * (x - a.x)) / d;
+        return (1 - w1 - w2) * a.z + w1 * b.z + w2 * c.z;
+    };
+    for (std::size_t i = 0; i + 1 < f.lists[2].size(); ++i) {
+        const Polygon& p = f.lists[2][i];
+        CHECK(p.count == 3);
+        CHECK(p.pcw == far.pcw);
+        for (std::uint32_t k = 0; k < 3; ++k) {
+            const Vertex& v = f.vertices[p.first + k];
+            CHECK(v.x >= 320.0f - 2048.5f);
+            CHECK(v.x <= 320.0f + 2048.5f);
+            CHECK(v.y >= 240.0f - 2048.5f);
+            CHECK(v.y <= 240.0f + 2048.5f);
+            // Both source triangles share the plane only if the quad is flat: check against the
+            // one that contains the point (the first triangle of the strip covers x < 224).
+            const double z0 = plane_z(vs[0], vs[1], vs[2], v.x, v.y);
+            const double z1 = plane_z(vs[1], vs[2], vs[3], v.x, v.y);
+            CHECK((std::abs(z0 - v.z) < 1e-4 * std::max(1.0, std::abs(z0)) ||
+                   std::abs(z1 - v.z) < 1e-4 * std::max(1.0, std::abs(z1))));
+        }
+    }
+    // A frame with nothing far away is untouched.
+    Frame g = before;
+    g.lists[2].erase(g.lists[2].begin());
+    const auto n = g.vertices.size();
+    CHECK(clip_far_polygons(g, 2048.0f) == 0);
+    CHECK(g.vertices.size() == n);
+}
+
+TEST_CASE("display list: clipped pieces keep their parent's translucent sort keys") {
+    using namespace dream::render;
+    Frame f;
+    for (const auto& v : {Vertex{-1e7f, 0, 1000.0f}, Vertex{300, 200, 0.01f}, Vertex{-1e7f, 400, 1000.0f}})
+        f.vertices.push_back(v);
+    Polygon p{};
+    p.count = 3;
+    f.lists[2].push_back(p);
+    REQUIRE(clip_far_polygons(f, 2048.0f) == 1);
+    REQUIRE(!f.lists[2].empty());
+    for (const auto& q : f.lists[2]) {
+        CHECK(q.sort_triangle == doctest::Approx((1000.0f + 0.01f + 1000.0f) / 3.0f));
+        CHECK(q.sort_strip == doctest::Approx(0.01f));
+    }
+}
